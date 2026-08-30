@@ -1,0 +1,250 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Sendspin</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#071a2f">
+  <style>
+    :root {
+      --bg:#03101f; --bg2:#071a2f; --panel:#0a1d33; --panel2:#0d2744;
+      --line:#1d2a41; --text:#f5f7fb; --muted:#909ab0; --purple:#2f6fed;
+      --purple2:#1849a9; --green:#46de70; --red:#ff5c68; --yellow:#e8bd58;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#03101f; color:var(--text); font-family:Arial,Helvetica,sans-serif; }
+    button,input { font:inherit; }
+    button { color:inherit; }
+    .app { display:grid; grid-template-columns:300px 1fr; height:100vh; background:radial-gradient(circle at 60% 30%,#0c2b55 0,#071a2f 38%,#020b16 75%); }
+    .sidebar { border-right:1px solid #142038; padding:28px 24px; display:flex; flex-direction:column; background:linear-gradient(180deg,#04101e,#071a2f); }
+    .brand { font-size:34px; font-weight:700; display:flex; align-items:center; gap:14px; margin-bottom:40px; }
+    .brand-icon { width:44px; height:44px; border-radius:10px; object-fit:cover; flex:0 0 auto; }
+    .nav { display:flex; flex-direction:column; gap:10px; }
+    .nav-item { border:0;background:transparent;text-align:left;padding:18px 20px;border-radius:12px;font-size:22px;cursor:pointer;display:flex;align-items:center;gap:15px; }
+    .nav-item.active { background:linear-gradient(135deg,#1f5fbf,#174a99); }
+    .nav-item:focus,.control:focus,.action:focus,.settings-input:focus { outline:4px solid #78a9ff; outline-offset:3px; }
+    .nav-icon { width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#c7cee0;flex:0 0 28px; }
+    .nav-icon svg { width:24px;height:24px;display:block; }
+    .status-row { display:flex;align-items:center;gap:10px;font-size:18px;margin-bottom:18px; }
+    .dot,.tiny-dot { border-radius:50%;background:#5f687a;display:inline-block; }
+    .dot { width:14px;height:14px; } .tiny-dot{width:10px;height:10px;}
+    .dot.ok,.tiny-dot.ok { background:var(--green); box-shadow:0 0 10px rgba(70,222,112,.4); }
+    .dot.warn { background:var(--yellow); } .dot.bad { background:var(--red); }
+    .side-title{font-size:24px;margin-bottom:4px}.side-sub{font-size:17px;color:#b8c0d2;word-break:break-all}
+    .main { display:grid;grid-template-rows:1fr 136px;min-width:0; }
+    .content { position:relative;padding:28px 38px 20px;overflow:hidden;min-height:0; }
+    .clock { position:absolute;right:38px;top:28px;font-size:28px;z-index:5; }
+    .view { display:none;height:100%;min-height:0; } .view.active{display:block;}
+    .section-title { color:#5f9cff;font-size:18px;font-weight:700;letter-spacing:.04em;margin:42px 0 24px; }
+    .now-grid { display:grid;grid-template-columns:minmax(0,1fr);height:calc(100% - 90px); }
+    .hero { display:flex;flex-direction:column;min-width:0;max-width:1180px; }
+    .hero-top { display:grid;grid-template-columns:340px minmax(0,1fr);gap:44px;align-items:center; }
+    .album-art { width:340px;height:340px;border-radius:18px;background:linear-gradient(145deg,#161c2b,#060910);background-size:cover;background-position:center;box-shadow:0 20px 55px rgba(0,0,0,.35);position:relative;overflow:hidden; }
+    .album-art:not(.has-art)::after { content:'♪';position:absolute;inset:0;display:grid;place-items:center;font-size:130px;color:#2f6fed;opacity:.85; }
+    .track-title { font-size:42px;font-weight:700;margin-bottom:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .track-artist { font-size:30px;margin-bottom:12px; }
+    .track-album { font-size:21px;color:var(--muted);min-height:26px; }
+    .badges { display:flex;gap:10px;margin-top:25px;flex-wrap:wrap; }
+    .badges:empty { display:none; }
+    .badge { padding:9px 12px;border-radius:8px;background:#121d33;color:#c7cee0;font-size:16px; }
+    .progress { height:6px;border-radius:4px;background:#253149;margin:40px 0 12px;position:relative; }
+    .progress::before { content:'';position:absolute;left:0;top:0;bottom:0;width:28%;background:linear-gradient(90deg,#1f5fbf,#4d8dff);border-radius:4px; }
+    .time-row { display:flex;justify-content:space-between;color:#a9b1c2;font-size:16px; }
+    .controls { display:flex;align-items:center;justify-content:center;gap:28px;margin:22px 0; }
+    .control { border:0;background:transparent;font-size:34px;width:64px;height:64px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;flex:0 0 64px; }
+    .control svg { display:block;width:32px;height:32px;margin:0;flex:0 0 auto; }
+    .control-labeled > span:last-child { font-size:15px;color:#9eacc5;font-weight:400; }
+    .playpause-icon { display:flex;align-items:center;justify-content:center;width:34px;height:34px;line-height:1; }
+    .control.primary { width:86px;height:86px;flex:0 0 86px;background:linear-gradient(145deg,#2368d8,#164a9d);font-size:31px;display:flex;align-items:center;justify-content:center;padding:0; }
+    .control.primary > span:last-child { margin-top:4px; }
+    .play-pause-icon { display:grid;place-items:center;width:36px;height:36px; }
+    .play-pause-icon svg { width:36px;height:36px; }
+    .playpause-icon { display:flex;align-items:center;justify-content:center;width:34px;height:34px;line-height:1; }
+    .control.primary { width:86px;height:86px;flex:0 0 86px;background:linear-gradient(145deg,#2368d8,#164a9d);font-size:31px;display:flex;align-items:center;justify-content:center;padding:0; }
+    .volume-row { display:grid;grid-template-columns:50px 1fr 70px;gap:14px;align-items:center;margin:6px 10px 0; }
+    input[type=range] { accent-color:#2f6fed;width:100%; }
+    .card { border:1px solid var(--line);background:rgba(13,23,41,.88);border-radius:15px;padding:22px; }
+    .card-title { color:#5f9cff;font-size:16px;font-weight:700;margin-bottom:18px; }
+    .action { width:100%;border:1px solid #293650;background:#101a2d;border-radius:10px;padding:14px 15px;cursor:pointer;margin-top:17px;font-size:16px; }
+    .footer { margin:0 28px 26px;border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.94);display:grid;grid-template-columns:1.55fr 1.1fr 1.1fr 1fr 1.25fr;align-items:stretch;padding:0 28px;gap:0;min-height:112px; }
+    .footer-cell { min-width:0;border-right:1px solid #1d2940;padding:14px 22px 18px;display:grid;grid-template-rows:18px 26px minmax(18px,auto);align-content:start;min-height:112px; } .footer-cell:first-child{padding-left:0}.footer-cell:last-child{border-right:0}
+    .footer-label{font-size:14px;color:#5f9cff;font-weight:700;margin:0 0 4px 0;line-height:18px;height:18px;align-self:start}.footer-value{font-size:19px;line-height:24px;min-height:24px;white-space:normal;overflow-wrap:anywhere;margin:0;align-self:start}.footer-sub{font-size:14px;color:#8993aa;margin:2px 0 0 0;white-space:normal;overflow-wrap:anywhere;line-height:17px;min-height:17px;align-self:start}
+    .pair-layout { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr);gap:26px;padding-top:42px;height:calc(100% - 30px); }
+    .pair-main { overflow:auto;padding-right:4px; }
+    .pair-header { font-size:38px;font-weight:700;margin:0 0 8px; }
+    .pair-sub { color:var(--muted);font-size:19px;margin-bottom:26px; }
+    .data-card { border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.92);padding:20px;margin-bottom:16px; }
+    .data-label { color:#5f9cff;font-size:14px;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em; }
+    .data-value { font-family:monospace;font-size:17px;line-height:1.45;word-break:break-all;color:#f3f5fa; }
+    .data-value.pin { font-family:Arial,Helvetica,sans-serif;font-size:38px;font-weight:700;letter-spacing:.08em; }
+    .data-actions { display:flex;gap:10px;margin-top:14px; }
+    .small-btn { border:1px solid #30405e;background:#111d33;border-radius:8px;padding:10px 14px;cursor:pointer; }
+    .small-btn.primary{background:#1f5fbf;border-color:#3f80e8}.small-btn.danger{border-color:#7a3540;color:#ff8a93}
+    .pair-side .album-art { width:100%;height:auto;aspect-ratio:1/1;max-height:330px; }
+    .about-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px; }
+    .settings-main { max-width:980px;padding-top:42px;height:100%;overflow-y:auto;padding-right:18px;padding-bottom:44px;scrollbar-gutter:stable; }
+    .settings-row { margin-bottom:22px; }
+    .connection-card { margin-bottom:16px; }
+    .connection-label { display:block; margin:18px 0 8px; color:#a0a9bd; }
+    .connection-card .settings-input { margin-bottom:2px; }
+
+    .settings-row label { display:block;color:#a0a9bd;margin-bottom:8px;font-size:16px; }
+    .settings-input { width:100%;border:1px solid #2b3954;background:#0e1829;color:#fff;border-radius:9px;padding:14px;font-size:18px; }
+    #debugLog { height:220px;overflow:auto;background:#050912;border-radius:10px;padding:14px;font:14px monospace;white-space:pre-wrap;color:#b8c2d7; }
+    .settings-end { height:140px; min-height:140px; width:100%; background:transparent; border:0; border-radius:0; outline:none !important; box-shadow:none !important; padding:0; margin:0; }
+    .settings-end:focus { background:transparent !important; outline:none !important; box-shadow:none !important; }
+    #debugLog:focus { outline:4px solid #78a9ff; outline-offset:3px; box-shadow:0 0 22px rgba(47,111,237,.42); }
+    .toast { position:fixed;left:50%;bottom:35px;transform:translateX(-50%) translateY(30px);opacity:0;background:#1c2b43;border:1px solid #41516f;padding:12px 18px;border-radius:9px;transition:.2s;pointer-events:none;z-index:100; }
+    .toast.show { opacity:1;transform:translateX(-50%) translateY(0); }
+    @media (max-width:1100px) {
+      .app{grid-template-columns:230px 1fr}.sidebar{padding:22px 16px}.brand{font-size:27px}.nav-item{font-size:18px;padding:15px}
+      .now-grid{grid-template-columns:1fr}.hero-top{grid-template-columns:280px 1fr}.album-art{width:280px;height:280px}
+      .footer { margin:0 28px 26px;border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.94);display:grid;grid-template-columns:1.55fr 1.1fr 1.1fr 1fr 1.25fr;align-items:stretch;padding:0 28px;gap:0;min-height:112px; }.footer-cell:nth-child(4),.footer-cell:nth-child(5){display:none}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><img class="brand-icon" src="favicon.png" alt="">Sendspin</div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="now" tabindex="0"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V6.8l9-2.2v10.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="3" fill="currentColor"/><circle cx="15.5" cy="15" r="3" fill="currentColor"/></svg></span>Now Playing</button>
+      <button class="nav-item" data-view="settings" tabindex="0"><span class="nav-icon">⚙</span>Settings</button>
+      <button class="nav-item" data-view="about" tabindex="0"><span class="nav-icon">ⓘ</span>About</button>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <section class="content">
+      <div id="clock" class="clock">--:--</div>
+
+      <div id="view-now" class="view active">
+        <div class="section-title">NOW PLAYING</div>
+        <div class="now-grid">
+          <div class="hero">
+            <div class="hero-top">
+              <div id="albumArt" class="album-art"></div>
+              <div>
+                <div id="trackTitle" class="track-title">Nothing playing</div>
+                <div id="trackArtist" class="track-artist">Music Assistant</div>
+                <div id="trackAlbum" class="track-album"></div>
+                <div id="qualityBadges" class="badges"></div>
+              </div>
+            </div>
+            <div class="progress"></div>
+            <div class="time-row"><span>—</span><span>—</span></div>
+            <div class="controls">
+              <button id="shuffle" class="control" title="Shuffle" aria-label="Shuffle" tabindex="0">
+                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+                  <path d="M16 3h5v5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 6h2.5c2.2 0 3.6 1 5.1 3l.8 1.1c1.6 2.2 3 3.9 5.6 3.9H21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                  <path d="M16 16l5 5m0-5v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 18h2.5c1.8 0 3.1-.7 4.3-2.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <button id="previous" class="control" title="Previous" aria-label="Previous" tabindex="0">
+                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+                  <path d="M6 5v14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M18 6.5L9 12l9 5.5z" fill="currentColor"/>
+                </svg>
+              </button>
+              <button id="playPause" class="control primary" title="Play/Pause" aria-label="Play/Pause" tabindex="0">
+                <span id="playPauseIcon" class="playpause-icon">
+                  <svg class="icon-play" viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
+                    <path d="M8 5.5L19 12 8 18.5z" fill="currentColor"/>
+                  </svg>
+                </span>
+              </button>
+              <button id="next" class="control" title="Next" aria-label="Next" tabindex="0">
+                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+                  <path d="M18 5v14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M6 6.5L15 12l-9 5.5z" fill="currentColor"/>
+                </svg>
+              </button>
+              <button id="repeat" class="control" title="Repeat" aria-label="Repeat" tabindex="0">
+                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+                  <path d="M17 4l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M20 7H9a5 5 0 0 0-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                  <path d="M7 20l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 17h11a5 5 0 0 0 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+            <div class="volume-row">
+              <button id="muteBtn" class="control" style="font-size:22px" tabindex="0">🔊</button>
+              <input id="volumeSlider" type="range" min="0" max="100" value="100" tabindex="0">
+              <div id="volumeValue">100%</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div id="view-settings" class="view">
+        <div class="settings-main">
+          <h1 class="pair-header">Settings</h1>
+          <div class="pair-sub">Connection, pairing and diagnostics.</div>
+          <div class="data-card connection-card">
+            <div class="data-label">Connection</div>
+            <div class="pair-sub" style="margin:0 0 16px">Direct connection to the Sendspin WebSocket endpoint.</div>
+            <label class="data-label connection-label" for="wsUrl">Sendspin WebSocket</label>
+            <input id="wsUrl" class="settings-input" value="ws://homeassistant.lan:8927/sendspin" tabindex="0">
+            <div class="data-actions">
+              <button id="connectBtn" class="small-btn primary" tabindex="0">Connect</button>
+              <button id="disconnectBtn" class="small-btn" tabindex="0">Disconnect</button>
+            </div>
+          </div>
+
+          <div class="data-card" style="margin-top:25px">
+            <div class="data-label">Pairing</div>
+            <div class="pair-sub" style="margin:0 0 16px">Pair this VIDAA player using the dynamic PIN.</div>
+            <div class="data-label" style="margin-top:14px">Status</div>
+            <div id="pairStatus" class="data-value">Idle</div>
+            <div class="data-label" style="margin-top:20px">Dynamic PIN</div>
+            <div id="pairPin" class="data-value pin">—</div>
+            <div class="data-actions">
+              <button id="openPairing" class="small-btn primary" tabindex="0">Allow pairing</button>
+              <button id="cancelPairing" class="small-btn" tabindex="0">Cancel</button>
+              <button id="copyPin" class="small-btn" tabindex="0">Copy PIN</button>
+            </div>
+            <div class="data-label" style="margin-top:22px">Client ID</div>
+            <div id="pairClientId" class="data-value">—</div>
+            <div class="data-actions"><button id="copyClientId" class="small-btn" tabindex="0">Copy client ID</button></div>
+          </div>
+          <div class="data-card" style="margin-top:25px">
+            <div class="data-label">Debug log</div>
+            <pre id="debugLog" tabindex="0"></pre>
+          </div>
+          <div id="settingsEnd" class="settings-end" tabindex="0" aria-label="End of settings"><span aria-hidden="true">&nbsp;</span></div>
+        </div>
+      </div>
+
+      <div id="view-about" class="view">
+        <div class="settings-main">
+          <h1 class="pair-header">Sendspin for VIDAA</h1>
+          <div class="pair-sub">A browser-based Sendspin player for VIDAA TVs.</div>
+          <div class="about-grid">
+            <div class="data-card"><div class="data-label">Version</div><div class="data-value">1.0.0</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-cell"><div class="footer-label">STATUS</div><div class="footer-value" style="display:flex;align-items:center;gap:10px"><span id="connectionDot" class="dot"></span><span id="connectionText">Disconnected</span></div><div id="footerServer" class="footer-sub">Music Assistant · homeassistant.lan:8927/sendspin</div></div>
+      <div class="footer-cell"><div class="footer-label">SYNC</div><div id="footerSync" class="footer-value">—</div><div id="footerSyncSub" class="footer-sub">Clock sync pending</div></div>
+      <div class="footer-cell"><div class="footer-label">BUFFER</div><div class="footer-value">250 ms min</div><div class="footer-sub">Jitter target</div></div>
+      <div class="footer-cell"><div class="footer-label">VOLUME</div><div id="footerVolume" class="footer-value">100%</div></div>
+      <div class="footer-cell"><div class="footer-label">CLIENT</div><div class="footer-value">VIDAA TV</div><div class="footer-sub">Sendspin UI v1.0.0</div></div>
+    </footer>
+  </main>
+</div>
+
+<div id="copyToast" class="toast">Copied</div>
+
+<script src="sendspin.js"></script>
+</body>
+</html>

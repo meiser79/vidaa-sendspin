@@ -1,0 +1,17 @@
+{
+  "name": "vidaa-sendspin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser-based VIDAA Sendspin player",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "npx http-server dist -p 8080 -c-1"
+  },
+  "dependencies": {
+    "@sendspin/sendspin-js": "latest"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "http-server": "^14.1.1"
+  }
+}

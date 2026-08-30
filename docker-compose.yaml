@@ -1,0 +1,10 @@
+services:
+  vidaa-sendspin:
+    build: .
+    container_name: vidaa-sendspin
+    network_mode: bridge
+    environment:
+      - TZ=Europe/Berlin
+    ports:
+      - 8080:80/tcp
+    restart: unless-stopped
