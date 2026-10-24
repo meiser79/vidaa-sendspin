@@ -2,695 +2,575 @@ import { SendspinPlayer } from '@sendspin/sendspin-js';
 
 const $ = (id) => document.getElementById(id);
 
-let player = null;
-let ws = null;
-let lastState = null;
-let dynamicPin = null;
-let pairingStatus = 'Idle';
-let autoConnectStarted = false;
-let lastMetadataDebug = '';
+const DISCOVERY_ENDPOINT = 'api/server';
+const DEFAULT_PORT = 8927;
+const DEFAULT_PATH = '/sendspin';
+const RETRY_DELAY_MS = 5000;
+const PAIRED_KEY = 'vidaa-sendspin-paired';
 
-const DEFAULT_WS = 'ws://homeassistant.lan:8927/sendspin';
-const REQUIRED_LEAD_TIME_MS = 250;
-const MIN_BUFFER_MS = 250;
+let player = null;
+let server = null;
+let lastState = null;
+let retryTimer = null;
+let startSeq = 0;
+let lastMetadataDebug = '';
+let lastFocusBeforeSettings = null;
+
+// ---------------------------------------------------------------------------
+// Helpers
 
 function log(message) {
   const line = `[${new Date().toLocaleTimeString('de-DE', { hour12: false })}] ${message}`;
   console.log(line);
   const el = $('debugLog');
-  if (el) {
-    el.textContent += line + '\n';
-    el.scrollTop = el.scrollHeight;
-  }
+  el.textContent += line + '\n';
+  // Keep the on-screen log bounded on long-running TVs.
+  if (el.textContent.length > 20000) el.textContent = el.textContent.slice(-15000);
+  el.scrollTop = el.scrollHeight;
 }
 
-function safeStorageGet(key, fallback) {
-  try { return localStorage.getItem(key) || fallback; } catch (_) { return fallback; }
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
 }
-function safeStorageSet(key, value) {
+function storageSet(key, value) {
   try { localStorage.setItem(key, value); } catch (_) {}
 }
 
-function setConnectionState(text, mode = '') {
+function formatTime(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '0:00';
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+function formatPin(pin) {
+  const p = String(pin || '');
+  if (p.length === 6) return p.slice(0, 3) + ' ' + p.slice(3);
+  if (p.length === 8) return p.slice(0, 4) + ' ' + p.slice(4);
+  return p;
+}
+
+function setArt(el, url) {
+  if (url) {
+    el.style.backgroundImage = `url("${String(url).replace(/"/g, '\\"')}")`;
+    el.classList.add('has-art');
+  } else {
+    el.style.backgroundImage = '';
+    el.classList.remove('has-art');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Status
+
+function setConnection(text, mode) {
   $('connectionText').textContent = text;
-  $('connectionDot').className = 'dot ' + mode;
+  $('connectionDot').className = 'dot ' + (mode || '');
+  const notice = $('notice');
+  if (mode === 'ok') {
+    notice.classList.remove('show');
+  } else {
+    notice.textContent = mode === 'bad' ? text + ' — retrying…' : 'Looking for Music Assistant on your network…';
+    notice.classList.add('show');
+  }
 }
 
-function setView(name) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(v => v.classList.remove('active'));
-
-  const view = $('view-' + name);
-  const nav = document.querySelector(`.nav-item[data-view="${name}"]`);
-
-  if (view) view.classList.add('active');
-  if (nav) nav.classList.add('active');
-
-  focusDefaultForView(name);
+function updateServerInfo() {
+  $('serverName').textContent = server ? server.name || server.host : '—';
+  $('serverUrl').textContent = server ? server.url.replace(/^wss?:\/\//, '') : '—';
+  $('clientId').textContent = player?.clientId || '—';
 }
 
-function attachNavigation() {
-  document.querySelectorAll('.nav-item[data-view]').forEach(btn => {
-    btn.addEventListener('click', () => setView(btn.dataset.view));
+function updateSyncInfo() {
+  const el = $('syncInfo');
+  if (!player || !player.isConnected) {
+    el.textContent = '—';
+  } else if (!player.timeSyncInfo?.synced) {
+    el.textContent = 'Syncing…';
+  } else {
+    const err = player.syncInfo?.syncErrorMs;
+    el.textContent = Number.isFinite(err)
+      ? `±${Math.abs(err) < 10 ? Math.abs(err).toFixed(1) : Math.round(Math.abs(err))} ms`
+      : 'Synced';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Now playing
+
+function updatePlayerState(state) {
+  lastState = state;
+
+  const playing = !!state?.isPlaying;
+  $('iconPlay').style.display = playing ? 'none' : 'block';
+  $('iconPause').style.display = playing ? 'block' : 'none';
+
+  const volume = Number.isFinite(state?.volume) ? Math.round(state.volume) : 0;
+  const muted = !!state?.muted;
+  if (document.activeElement !== $('volumeSlider')) $('volumeSlider').value = volume;
+  $('volumeValue').textContent = muted ? 'Muted' : volume + '%';
+  $('volWaves').style.display = muted ? 'none' : '';
+  $('volMuted').style.display = muted ? '' : 'none';
+
+  const meta = state?.serverState?.metadata || {};
+  $('trackTitle').textContent = meta.title || 'Nothing playing';
+  $('trackArtist').textContent = meta.artist || '';
+  $('trackAlbum').textContent = [meta.album, meta.year].filter(Boolean).join(' · ');
+  setArt($('albumArt'), meta.artwork_url);
+  setArt($('backdrop'), meta.artwork_url);
+
+  $('shuffle').classList.toggle('on', !!meta.shuffle);
+  const repeat = meta.repeat || 'off';
+  $('repeat').classList.toggle('on', repeat !== 'off');
+  $('repeat').classList.toggle('repeat-one', repeat === 'one');
+
+  const group = state?.groupState?.group_name;
+  $('groupName').textContent = group ? ' · ' + group : '';
+
+  const metadataDebug = JSON.stringify(meta);
+  if (metadataDebug !== '{}' && metadataDebug !== lastMetadataDebug) {
+    lastMetadataDebug = metadataDebug;
+    log('Metadata: ' + metadataDebug);
+  }
+}
+
+function updateProgress() {
+  const progress = player?.trackProgress;
+  const duration = progress?.durationMs || 0;
+  const position = Math.min(progress?.positionMs || 0, duration || Infinity);
+  $('progressFill').style.width = duration ? (position / duration * 100).toFixed(2) + '%' : '0';
+  $('timeElapsed').textContent = formatTime(position);
+  $('timeTotal').textContent = duration ? formatTime(duration) : '';
+}
+
+function updateQualityBadges() {
+  const container = $('qualityBadges');
+  const format = player?.currentFormat;
+  const values = [];
+
+  if (format) {
+    const codec = String(format.codec || '').toLowerCase();
+    if (codec) values.push(codec.toUpperCase());
+    if (format.sample_rate > 0) {
+      const khz = format.sample_rate / 1000;
+      values.push((Number.isInteger(khz) ? khz : khz.toFixed(1)) + ' kHz');
+    }
+    // bit_depth is meaningful for PCM/FLAC, not Opus.
+    if (format.bit_depth > 0 && codec !== 'opus') values.push(format.bit_depth + '-bit');
+    if (format.channels === 1) values.push('Mono');
+    else if (format.channels === 2) values.push('Stereo');
+    else if (format.channels > 2) values.push(format.channels + ' ch');
+  }
+
+  const key = values.join('|');
+  if (container.dataset.key === key) return;
+  container.dataset.key = key;
+  // innerHTML/appendChild instead of replaceChildren for older VIDAA engines.
+  container.innerHTML = '';
+  values.forEach((value) => {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = value;
+    container.appendChild(badge);
   });
 }
 
-function send(command, payload) {
+function send(command) {
   if (!player) return;
   try {
-    player.sendCommand(command, payload);
+    player.sendCommand(command);
     log('Command: ' + command);
   } catch (err) {
     log('Command error: ' + err);
   }
 }
 
-function updatePairingUi() {
-  $('pairClientId').textContent = player?.clientId || '—';
-  $('pairPin').textContent = formatPin(dynamicPin);
-  $('pairStatus').textContent = pairingStatus;
+// ---------------------------------------------------------------------------
+// Pairing
+
+function setPairing(status, pin) {
+  $('pairStatus').textContent = status;
+  const pinEl = $('pairPin');
+  pinEl.textContent = pin ? formatPin(pin) : 'No PIN requested';
+  pinEl.classList.toggle('empty', !pin);
 }
 
-function updatePlayerState(state) {
-  lastState = state;
+function initialPairingStatus() {
+  return storageGet(PAIRED_KEY) ? 'Paired' : 'Not paired yet';
+}
 
-  updateQualityBadges();
+// ---------------------------------------------------------------------------
+// Discovery & connection
 
-  const playing = !!state?.isPlaying;
-  const volume = Number.isFinite(state?.volume) ? state.volume : 0;
-  const muted = !!state?.muted;
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ]);
+}
 
-  const playIcon = $('playIcon');
-  const pauseIcon = $('pauseIcon');
-  if (playIcon) playIcon.style.display = playing ? 'none' : 'block';
-  if (pauseIcon) pauseIcon.style.display = playing ? 'block' : 'none';
-  $('volumeValue').textContent = muted ? 'Muted' : Math.round(volume) + '%';
-  $('volumeSlider').value = volume;
-  $('footerVolume').textContent = muted ? 'Muted' : Math.round(volume) + '%';
+async function discoverViaApi() {
+  const res = await withTimeout(fetch(DISCOVERY_ENDPOINT, { cache: 'no-store' }), 4000);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return data.server || null;
+}
 
-  const serverState = state?.serverState || {};
-  const rawMetadata = serverState.metadata || serverState.media || serverState.track || {};
-  const metadata = rawMetadata.metadata || rawMetadata;
-
-  const title = metadata.title || metadata.name || metadata.track_name || serverState.title || 'Nothing playing';
-  const artist = metadata.artist || metadata.artist_name ||
-    (Array.isArray(metadata.artists) ? metadata.artists.join(', ') : '') ||
-    serverState.artist || 'Music Assistant';
-  const album = metadata.album || metadata.album_name || serverState.album || '';
-
-  const trackTitleEl = $('trackTitle');
-  const trackArtistEl = $('trackArtist');
-  const trackAlbumEl = $('trackAlbum');
-  if (trackTitleEl) trackTitleEl.textContent = title;
-  if (trackArtistEl) trackArtistEl.textContent = artist;
-  if (trackAlbumEl) trackAlbumEl.textContent = album;
-
-  try {
-    const metadataDebug = JSON.stringify(rawMetadata);
-    if (metadataDebug && metadataDebug !== '{}' && metadataDebug !== lastMetadataDebug) {
-      lastMetadataDebug = metadataDebug;
-      log('Metadata: ' + metadataDebug);
-    }
-  } catch (_) {}
-
-  const art = metadata.image_url || metadata.image || metadata.artwork_url ||
-    metadata.artwork || metadata.thumbnail || metadata.album_art_uri ||
-    serverState.image_url || '';
-  const artEls = [$('albumArt')];
-  artEls.forEach(el => {
-    if (!el) return;
-    if (art) {
-      el.style.backgroundImage = `url("${String(art).replace(/"/g, '\\"')}")`;
-      el.classList.add('has-art');
-    } else {
-      el.style.backgroundImage = '';
-      el.classList.remove('has-art');
-    }
+// Without the discovery service (e.g. plain static hosting) assume the UI is
+// served from the Music Assistant host itself and try its default port.
+function probeSameHost() {
+  const host = window.location.hostname;
+  if (!host) return Promise.resolve(null);
+  const url = `ws://${host}:${DEFAULT_PORT}${DEFAULT_PATH}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try { ws.close(); } catch (_) {}
+      resolve(ok ? { name: host, host, port: DEFAULT_PORT, path: DEFAULT_PATH, url } : null);
+    };
+    const ws = new WebSocket(url);
+    ws.onopen = () => finish(true);
+    ws.onerror = () => finish(false);
+    setTimeout(() => finish(false), 3000);
   });
-
 }
 
-
-function formatSampleRate(sampleRate) {
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return null;
-  if (sampleRate % 1000 === 0) return (sampleRate / 1000) + ' kHz';
-  return (sampleRate / 1000).toFixed(1).replace('.', ',') + ' kHz';
+async function discover() {
+  try {
+    return await discoverViaApi();
+  } catch (err) {
+    log('Discovery service unavailable (' + (err.message || err) + '), probing page host');
+    return probeSameHost();
+  }
 }
 
-function formatChannels(channels) {
-  if (!Number.isFinite(channels) || channels <= 0) return null;
-  if (channels === 1) return 'Mono';
-  if (channels === 2) return 'Stereo';
-  return channels + ' ch';
+function teardown() {
+  if (!player) return;
+  try { player.disconnect('restart'); } catch (_) {}
+  player = null;
 }
 
-function updateQualityBadges() {
-  const container = $('qualityBadges');
-  if (!container) return;
-
-  const format = player?.currentFormat;
-  if (!format) {
-    container.replaceChildren();
-    return;
-  }
-
-  const values = [];
-
-  if (format.codec) {
-    values.push(String(format.codec).toUpperCase());
-  }
-
-  const sampleRate = formatSampleRate(format.sample_rate);
-  if (sampleRate) values.push(sampleRate);
-
-  // bit_depth is meaningful for PCM/FLAC, not Opus.
-  if (
-    Number.isFinite(format.bit_depth) &&
-    format.bit_depth > 0 &&
-    String(format.codec || '').toLowerCase() !== 'opus'
-  ) {
-    values.push(format.bit_depth + '-bit');
-  }
-
-  const channels = formatChannels(format.channels);
-  if (channels) values.push(channels);
-
-  container.replaceChildren(
-    ...values.map((value) => {
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = value;
-      return badge;
-    })
-  );
+function scheduleRetry() {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(start, RETRY_DELAY_MS);
 }
 
-function updateSyncStatus() {
-  const value = $('footerSync');
-  const sub = $('footerSyncSub');
-  if (!value || !sub) return;
-
-  if (!player || !player.isConnected) {
-    value.textContent = '—';
-    sub.textContent = 'Disconnected';
-    return;
-  }
-
-  const timeSync = player.timeSyncInfo;
-  if (!timeSync?.synced) {
-    value.textContent = 'Syncing…';
-    sub.textContent = 'Clock sync pending';
-    return;
-  }
-
-  const sync = player.syncInfo;
-  if (Number.isFinite(sync?.syncErrorMs)) {
-    const error = Math.abs(sync.syncErrorMs);
-    value.textContent = `±${error < 10 ? error.toFixed(1) : Math.round(error)} ms`;
-  } else {
-    value.textContent = 'Synced';
-  }
-
-  const method = sync?.correctionMethod && sync.correctionMethod !== 'none'
-    ? sync.correctionMethod
-    : (sync?.correctionMode || player.correctionMode || 'sync');
-  sub.textContent = `Correction: ${method}`;
-}
-
-function createPlayer(socket) {
-  return new SendspinPlayer({
-    webSocket: socket,
+function createPlayer(target) {
+  const config = {
     clientName: 'VIDAA TV',
     productName: 'VIDAA Sendspin',
     correctionMode: 'sync',
-    requiredLeadTimeMs: REQUIRED_LEAD_TIME_MS,
-    minBufferMs: MIN_BUFFER_MS,
     unpairedAccess: true,
-
     pinOutChannels: ['display'],
     minPinLength: 6,
 
-    onPairingPin: (pin, languages) => {
-      dynamicPin = pin || null;
-      log(`Pairing PIN: ${pin || 'hidden'} ${(languages || []).join(', ')}`);
-      updatePairingUi();
-      if (pin) setView('settings');
+    onPairingPin: (pin) => {
+      log('Pairing PIN ' + (pin ? 'received' : 'cleared'));
+      setPairing(pin ? 'Enter this PIN in Music Assistant' : $('pairStatus').textContent, pin);
+      if (pin) openSettings($('cancelPairing'));
     },
 
     onPairing: (event, detail) => {
-      const labels = {
-        pending: 'Waiting for local approval',
-        started: 'Pairing in progress',
-        finalized: 'Paired',
-        aborted: 'Pairing aborted'
-      };
-      pairingStatus = labels[event] || event || 'Idle';
-      log(`Pairing: ${event} ${detail ? JSON.stringify(detail) : ''}`);
-      updatePairingUi();
-      if (event === 'pending' || event === 'started') setView('settings');
+      log(`Pairing: ${event}${detail ? ' ' + detail : ''}`);
+      if (event === 'pending') {
+        setPairing('Music Assistant wants to pair. Press “Allow pairing”.');
+        openSettings($('openPairing'));
+      } else if (event === 'started') {
+        setPairing('Pairing in progress…', null);
+      } else if (event === 'finalized') {
+        storageSet(PAIRED_KEY, '1');
+        setPairing('Paired', null);
+        setTimeout(closeSettings, 2500);
+      } else if (event === 'aborted') {
+        setPairing('Pairing aborted' + (detail ? ` (${detail})` : ''), null);
+      }
     },
 
-    onStateChange: updatePlayerState
-  });
-}
+    onStateChange: updatePlayerState,
 
-async function connect() {
-  const wsUrl = $('wsUrl').value.trim() || DEFAULT_WS;
-  safeStorageSet('vidaa-sendspin-ws', wsUrl);
-
-  $('connectBtn').disabled = true;
-  setConnectionState('Connecting…', 'warn');
-
-  try {
-    if (player) {
-      try { player.disconnect('user_request'); } catch (_) {}
-      player = null;
+    reconnect: {
+      maxAttempts: 5,
+      onReconnecting: (attempt) => setConnection(`Reconnecting (${attempt})…`, 'warn'),
+      onReconnected: () => setConnection('Connected', 'ok'),
+      onExhausted: () => {
+        log('Reconnect exhausted, rediscovering server');
+        teardown();
+        start();
+      }
     }
-    if (ws) {
-      try { ws.close(); } catch (_) {}
-      ws = null;
-    }
+  };
 
-    ws = new WebSocket(wsUrl);
+  // The SDK appends /sendspin to baseUrl; only use it (and its auto-reconnect)
+  // when the advertised path is the standard one.
+  if (/\/sendspin\/?$/.test(target.path || DEFAULT_PATH)) {
+    config.baseUrl = `http://${target.host}:${target.port}${target.path || DEFAULT_PATH}`;
+  } else {
+    const ws = new WebSocket(target.url);
     ws.binaryType = 'arraybuffer';
-
-    ws.addEventListener('open', () => log('WebSocket OPEN'));
-    ws.addEventListener('error', () => log('WebSocket ERROR'));
-    ws.addEventListener('close', (ev) => {
-      log(`WebSocket CLOSE code=${ev.code} reason=${JSON.stringify(ev.reason || '')} clean=${ev.wasClean}`);
-      setConnectionState('Disconnected', 'bad');
-      $('connectBtn').disabled = false;
-      $('disconnectBtn').disabled = true;
-      updateSyncStatus();
-    });
-
-    player = createPlayer(ws);
-
-    // Keep unlock first in the user gesture.
-    await player.unlock();
-    await player.connect();
-
-    setConnectionState('Connected', 'ok');
-    $('connectBtn').disabled = true;
-    $('disconnectBtn').disabled = false;
-    $('footerServer').textContent = 'Music Assistant · ' + wsUrl.replace(/^wss?:\/\//, '');
-
-    updatePairingUi();
-    updateQualityBadges();
-    updateSyncStatus();
-    log(`Connected clientId=${player.clientId || 'unknown'}`);
-  } catch (err) {
-    setConnectionState('Error', 'bad');
-    $('connectBtn').disabled = false;
-    $('disconnectBtn').disabled = true;
-    log('CONNECT ERROR: ' + (err?.stack || String(err)));
+    ws.addEventListener('close', () => { if (player) { teardown(); scheduleRetry(); } });
+    config.webSocket = ws;
   }
+  return new SendspinPlayer(config);
 }
 
-function disconnect() {
-  if (player) {
-    try { player.disconnect('user_request'); } catch (_) {}
-  }
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    try { ws.close(1000, 'user_request'); } catch (_) {}
-  }
-  player = null;
-  ws = null;
-  setConnectionState('Disconnected', 'bad');
-  $('connectBtn').disabled = false;
-  $('disconnectBtn').disabled = true;
-  updatePairingUi();
-  updateQualityBadges();
-}
+async function start() {
+  // A newer start() (e.g. "Search again") supersedes any attempt in flight.
+  const seq = ++startSeq;
+  clearTimeout(retryTimer);
+  teardown();
+  setConnection('Searching…', 'warn');
 
-async function copyText(text) {
-  if (!text || text === 'Nicht verfügbar' || text === '—') return;
+  const found = await discover();
+  if (seq !== startSeq) return;
+  server = found;
+  updateServerInfo();
+  if (!server) {
+    log('No Sendspin server found, retrying');
+    setConnection('No server found', 'bad');
+    scheduleRetry();
+    return;
+  }
+
+  log(`Connecting to ${server.name || server.host} at ${server.url}`);
+  setConnection('Connecting…', 'warn');
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
-    $('copyToast').classList.add('show');
-    setTimeout(() => $('copyToast').classList.remove('show'), 1300);
+    const current = createPlayer(server);
+    player = current;
+    await current.unlock();
+    await current.connect();
+    if (seq !== startSeq) return;
+    setConnection('Connected', 'ok');
+    updateServerInfo();
+    log(`Connected clientId=${player.clientId}`);
   } catch (err) {
-    log('Copy failed: ' + err);
+    if (seq !== startSeq) return;
+    log('Connect failed: ' + (err?.message || String(err)));
+    teardown();
+    setConnection('Connection failed', 'bad');
+    scheduleRetry();
   }
 }
 
-function formatPin(pin) {
-  const p = String(pin || '');
-  if (p.length === 6) return p.slice(0, 3) + '-' + p.slice(3);
-  if (p.length === 8) return p.slice(0, 4) + '-' + p.slice(4);
-  return p || '—';
+// ---------------------------------------------------------------------------
+// Settings drawer
+
+function settingsOpen() {
+  return document.body.classList.contains('settings-open');
 }
 
+function openSettings(focusTarget) {
+  if (!settingsOpen()) {
+    lastFocusBeforeSettings = document.activeElement;
+    document.body.classList.add('settings-open');
+    updateServerInfo();
+  }
+  requestAnimationFrame(() => setTvFocus(focusTarget || $('openPairing')));
+}
 
-function isElementVisible(el) {
+function closeSettings() {
+  if (!settingsOpen()) return;
+  document.body.classList.remove('settings-open');
+  const target = lastFocusBeforeSettings && isVisible(lastFocusBeforeSettings)
+    ? lastFocusBeforeSettings
+    : $('playPause');
+  requestAnimationFrame(() => setTvFocus(target));
+}
+
+// ---------------------------------------------------------------------------
+// Remote-control navigation
+
+function isVisible(el) {
   if (!el) return false;
-  const style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
   const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
+  return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
 }
 
-function getFocusableElements() {
-  return Array.from(document.querySelectorAll(
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-  )).filter((el) => isElementVisible(el));
-}
-
-function ensureVisibleInSettings(el) {
-  if (!el) return;
-  var container = el.closest ? el.closest('.settings-main') : null;
-  if (!container) return;
-
-  var cr = container.getBoundingClientRect();
-  var er = el.getBoundingClientRect();
-  var margin = 32;
-
-  if (er.bottom > cr.bottom - margin) {
-    container.scrollTop += er.bottom - cr.bottom + margin;
-  } else if (er.top < cr.top + margin) {
-    container.scrollTop -= cr.top - er.top + margin;
-  }
-
-  // The focusable settingsEnd element below Debug Log lets D-pad Down
-  // move into the bottom breathing room and forces VIDAA to reveal it.
-  if (el.id === 'settingsEnd') {
-    container.scrollTop = container.scrollHeight - container.clientHeight;
-  }
+function getFocusable() {
+  const scope = settingsOpen() ? $('settings') : document.querySelector('.screen');
+  return Array.from(scope.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+    .filter(isVisible);
 }
 
 function setTvFocus(el) {
-  document.querySelectorAll('.tv-focus').forEach((node) => node.classList.remove('tv-focus'));
   if (!el) return;
-  try {
-    el.focus();
-  } catch (err) {
-    log('Focus failed: ' + String(err));
-    return;
-  }
-  el.classList.add('tv-focus');
+  try { el.focus(); } catch (_) { return; }
 
-  // VIDAA WebApps are inconsistent with scrollIntoView(), so scroll
-  // our own Settings/About container explicitly first.
-  ensureVisibleInSettings(el);
-
-  // Fallback for non-Settings elements / other browsers.
-  if (!(el.closest && el.closest('.settings-main'))) {
-    try { el.scrollIntoView(false); } catch (_) {}
-  }
-}
-
-function focusDefaultForView(viewName) {
-  requestAnimationFrame(() => {
-    let target = null;
-
-    if (viewName === 'now') {
-      target = $('playPause');
-    } else if (viewName === 'settings') {
-      target = $('wsUrl') || $('connectBtn');
-    } else if (viewName === 'about') {
-      target = document.querySelector('.nav-item[data-view="about"]');
-    }
-
-    if (!target || !isElementVisible(target)) {
-      target = getFocusableElements()[0] || null;
-    }
-
-    setTvFocus(target);
-  });
+  // VIDAA is inconsistent with scrollIntoView(), so scroll the drawer manually.
+  const container = $('settingsBody');
+  if (!container.contains(el)) return;
+  const cr = container.getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  const margin = 32;
+  if (er.bottom > cr.bottom - margin) container.scrollTop += er.bottom - cr.bottom + margin;
+  else if (er.top < cr.top + margin) container.scrollTop -= cr.top - er.top + margin;
 }
 
 function moveFocus(direction) {
-  const items = getFocusableElements();
+  const items = getFocusable();
   if (!items.length) return;
 
-  let current = document.activeElement;
+  const current = document.activeElement;
   if (!items.includes(current)) {
-    setTvFocus(items[0]);
+    setTvFocus(settingsOpen() ? items[0] : $('playPause'));
     return;
   }
 
   const a = current.getBoundingClientRect();
   const ax = a.left + a.width / 2;
   const ay = a.top + a.height / 2;
-
   let best = null;
   let bestScore = Infinity;
 
   for (const el of items) {
     if (el === current) continue;
-
     const b = el.getBoundingClientRect();
-    const bx = b.left + b.width / 2;
-    const by = b.top + b.height / 2;
-    const dx = bx - ax;
-    const dy = by - ay;
-
+    const dx = b.left + b.width / 2 - ax;
+    const dy = b.top + b.height / 2 - ay;
     let primary;
     let secondary;
 
-    if (direction === 'left') {
-      if (dx >= -2) continue;
-      primary = -dx;
-      secondary = Math.abs(dy);
-    } else if (direction === 'right') {
-      if (dx <= 2) continue;
-      primary = dx;
-      secondary = Math.abs(dy);
-    } else if (direction === 'up') {
-      if (dy >= -2) continue;
-      primary = -dy;
-      secondary = Math.abs(dx);
-    } else {
-      if (dy <= 2) continue;
-      primary = dy;
-      secondary = Math.abs(dx);
-    }
+    if (direction === 'left') { if (dx >= -2) continue; primary = -dx; secondary = Math.abs(dy); }
+    else if (direction === 'right') { if (dx <= 2) continue; primary = dx; secondary = Math.abs(dy); }
+    else if (direction === 'up') { if (dy >= -2) continue; primary = -dy; secondary = Math.abs(dx); }
+    else { if (dy <= 2) continue; primary = dy; secondary = Math.abs(dx); }
 
-    // Prefer elements that are mostly in the requested direction.
-    // Secondary-axis drift is penalized, but not enough to trap focus.
+    // Prefer elements mostly in the requested direction without trapping focus.
     const score = primary + secondary * 2.25;
-
-    if (score < bestScore) {
-      bestScore = score;
-      best = el;
-    }
+    if (score < bestScore) { bestScore = score; best = el; }
   }
 
   if (best) setTvFocus(best);
 }
 
-function handleTvBack() {
-  const activeView = document.querySelector('.view.active')?.id?.replace('view-', '') || 'now';
+// Left/Right only change the volume after OK is pressed on the slider, so
+// focus can still move past it to the other controls.
+function setAdjusting(input, on) {
+  input.classList.toggle('adjusting', on);
+}
 
-  if (activeView !== 'now') {
-    setView('now');
-    focusDefaultForView('now');
+function nudgeRange(input, delta) {
+  input.value = Math.max(Number(input.min || 0), Math.min(Number(input.max || 100), Number(input.value) + delta));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// Scroll the debug log with Up/Down; leave it once its edge is reached.
+function scrollLog(el, delta) {
+  const before = el.scrollTop;
+  el.scrollTop += delta;
+  return el.scrollTop !== before;
+}
+
+function handleRemoteKey(event) {
+  const code = event.keyCode || event.which || 0;
+  const key = event.key || '';
+  const active = document.activeElement;
+  const isRange = active && active.tagName === 'INPUT' && active.type === 'range';
+  const adjusting = isRange && active.classList.contains('adjusting');
+  const isLog = active === $('debugLog');
+
+  const handled = () => { event.preventDefault(); event.stopPropagation(); };
+
+  if (code === 37 || key === 'ArrowLeft') { handled(); adjusting ? nudgeRange(active, -5) : moveFocus('left'); return; }
+  if (code === 39 || key === 'ArrowRight') { handled(); adjusting ? nudgeRange(active, 5) : moveFocus('right'); return; }
+  if (code === 38 || key === 'ArrowUp') { handled(); if (!(isLog && scrollLog(active, -80))) moveFocus('up'); return; }
+  if (code === 40 || key === 'ArrowDown') { handled(); if (!(isLog && scrollLog(active, 80))) moveFocus('down'); return; }
+
+  if (code === 13 || key === 'Enter') {
+    handled();
+    if (isRange) setAdjusting(active, !adjusting);
+    else if (active && typeof active.click === 'function') active.click();
     return;
   }
 
-  // On the main screen, let VIDAA close the app if supported.
-  try {
-    window.close();
-  } catch (_) {}
+  // VIDAA Back is VK_BACK_SPACE = 8; keep other common TV codes as fallbacks.
+  if (code === 8 || code === 27 || code === 461 || code === 10009 || key === 'Backspace' || key === 'Escape' || key === 'BrowserBack') {
+    handled();
+    if (adjusting) setAdjusting(active, false);
+    else if (settingsOpen()) closeSettings();
+    else try { window.close(); } catch (_) {}
+    return;
+  }
+
+  // Physical media keys documented by VIDAA.
+  if (code === 415) { handled(); send('play'); return; }
+  if (code === 19) { handled(); send('pause'); return; }
+  if (code === 463) { handled(); send(lastState?.isPlaying ? 'pause' : 'play'); return; }
+  if (code === 413) { handled(); send('stop'); return; }
+
+  if (event.type === 'keydown') log('Unhandled key key=' + key + ' code=' + code);
 }
 
 function setupTvNavigation() {
-  document.addEventListener('focusin', function (event) {
-    document.querySelectorAll('.tv-focus').forEach(function (node) {
-      if (node !== event.target) node.classList.remove('tv-focus');
-    });
-    if (event.target && event.target.classList) {
-      event.target.classList.add('tv-focus');
-    }
-  });
-
-  function handleRemoteKey(event) {
-    var code = event.keyCode || event.which || 0;
-    var key = event.key || '';
-
-    // Debug every remote key so VIDAA-specific codes are visible in Settings.
-    if (code || key) {
-      log('KEY key=' + key + ' code=' + code);
-    }
-
-    var active = document.activeElement;
-    var isRange = active && active.tagName === 'INPUT' && active.type === 'range';
-
-    if (code === 37 || key === 'ArrowLeft') {
-      event.preventDefault();
-      event.stopPropagation();
-      if (isRange) {
-        var leftValue = Math.max(Number(active.min || 0), Number(active.value) - 5);
-        active.value = leftValue;
-        active.dispatchEvent(new Event('input', { bubbles: true }));
-      } else {
-        moveFocus('left');
-      }
-      return false;
-    }
-
-    if (code === 39 || key === 'ArrowRight') {
-      event.preventDefault();
-      event.stopPropagation();
-      if (isRange) {
-        var rightValue = Math.min(Number(active.max || 100), Number(active.value) + 5);
-        active.value = rightValue;
-        active.dispatchEvent(new Event('input', { bubbles: true }));
-      } else {
-        moveFocus('right');
-      }
-      return false;
-    }
-
-    if (code === 38 || key === 'ArrowUp') {
-      event.preventDefault();
-      event.stopPropagation();
-      moveFocus('up');
-      return false;
-    }
-
-    if (code === 40 || key === 'ArrowDown') {
-      event.preventDefault();
-      event.stopPropagation();
-      moveFocus('down');
-      return false;
-    }
-
-    if (code === 13 || key === 'Enter' || key === 'OK') {
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (active && active.tagName === 'INPUT' && active.type === 'text') {
-        try { active.blur(); } catch (_) {}
-        return false;
-      }
-
-      if (active && typeof active.click === 'function') {
-        active.click();
-      }
-      return false;
-    }
-
-    // VIDAA Back/Return is VK_BACK_SPACE = 8.
-    // Keep additional common TV codes as fallbacks.
-    if (
-      code === 8 ||
-      code === 27 ||
-      code === 461 ||
-      code === 10009 ||
-      key === 'Backspace' ||
-      key === 'Escape' ||
-      key === 'BrowserBack'
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      handleTvBack();
-      return false;
-    }
-
-    // Physical media keys documented by VIDAA.
-    if (code === 415) { // PLAY
-      event.preventDefault();
-      send('play');
-      return false;
-    }
-    if (code === 19) { // PAUSE
-      event.preventDefault();
-      send('pause');
-      return false;
-    }
-    if (code === 463) { // PLAY_PAUSE
-      event.preventDefault();
-      send(lastState?.isPlaying ? 'pause' : 'play');
-      return false;
-    }
-    if (code === 413) { // STOP
-      event.preventDefault();
-      send('stop');
-      return false;
-    }
-  }
-
-  // Capture phase is intentional: some VIDAA shells/browser layers consume
-  // navigation keys before bubbling reaches document.
-  window.addEventListener('keydown', handleRemoteKey, true);
-
-  // Some firmware/browser combinations expose the same remote controls on keyup.
-  // Only use keyup as fallback when no keydown has been seen recently.
-  var lastKeyDownAt = 0;
-  window.addEventListener('keydown', function () {
+  // Capture phase is intentional: some VIDAA shells consume navigation keys
+  // before bubbling reaches document.
+  let lastKeyDownAt = 0;
+  window.addEventListener('keydown', (event) => {
     lastKeyDownAt = Date.now();
+    // Any remote key press counts as a user gesture for the audio context.
+    if (player) player.unlock().catch(() => {});
+    handleRemoteKey(event);
   }, true);
 
-  window.addEventListener('keyup', function (event) {
-    if (Date.now() - lastKeyDownAt > 250) {
-      handleRemoteKey(event);
-    }
+  // Some firmware exposes remote keys only on keyup; use it as a fallback.
+  window.addEventListener('keyup', (event) => {
+    if (Date.now() - lastKeyDownAt > 250) handleRemoteKey(event);
   }, true);
+}
 
-  focusDefaultForView('now');
+// ---------------------------------------------------------------------------
+
+function updateClock() {
+  $('clock').textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function initialize() {
-  $('wsUrl').value = safeStorageGet('vidaa-sendspin-ws', DEFAULT_WS);
-  $('footerServer').textContent = 'Music Assistant · ' + $('wsUrl').value.replace(/^wss?:\/\//, '');
-
-  attachNavigation();
   setupTvNavigation();
 
-  $('connectBtn').addEventListener('click', connect);
-  $('disconnectBtn').addEventListener('click', disconnect);
+  $('openSettings').addEventListener('click', () => openSettings());
+  $('closeSettings').addEventListener('click', closeSettings);
+  document.querySelector('.scrim').addEventListener('click', closeSettings);
+  $('reconnectBtn').addEventListener('click', start);
 
   $('playPause').addEventListener('click', () => send(lastState?.isPlaying ? 'pause' : 'play'));
   $('previous').addEventListener('click', () => send('previous'));
   $('next').addEventListener('click', () => send('next'));
-  $('shuffle').addEventListener('click', () => send('shuffle'));
-  $('repeat').addEventListener('click', () => send('repeat_all'));
+  $('shuffle').addEventListener('click', () => {
+    send(lastState?.serverState?.metadata?.shuffle ? 'unshuffle' : 'shuffle');
+  });
+  $('repeat').addEventListener('click', () => {
+    const next = { off: 'repeat_all', all: 'repeat_one', one: 'repeat_off' };
+    send(next[lastState?.serverState?.metadata?.repeat || 'off']);
+  });
 
+  $('volumeSlider').addEventListener('blur', (e) => setAdjusting(e.target, false));
   $('volumeSlider').addEventListener('input', (e) => {
     const vol = Number(e.target.value);
-    if (player) {
-      try { player.setVolume(vol); } catch (_) {}
-    }
-    $('volumeValue').textContent = Math.round(vol) + '%';
-    $('footerVolume').textContent = Math.round(vol) + '%';
+    if (player) try { player.setVolume(vol); } catch (_) {}
+    $('volumeValue').textContent = vol + '%';
   });
-
   $('muteBtn').addEventListener('click', () => {
-    if (!player) return;
-    try { player.setMuted(!lastState?.muted); } catch (_) {}
+    if (player) try { player.setMuted(!lastState?.muted); } catch (_) {}
   });
-  $('copyClientId').addEventListener('click', () => copyText(player?.clientId));
-  $('copyPin').addEventListener('click', () => copyText(dynamicPin));
 
   $('openPairing').addEventListener('click', () => {
     if (!player) return;
     try {
       player.openPairingWindow();
-      pairingStatus = 'Pairing window open (~5 min)';
-      updatePairingUi();
+      setPairing('Pairing allowed for ~5 minutes. Start pairing in Music Assistant.');
       log('Pairing window opened');
     } catch (err) {
       log('openPairingWindow failed: ' + err);
     }
   });
-
   $('cancelPairing').addEventListener('click', () => {
     if (!player) return;
     try {
       player.cancelPairing();
-      dynamicPin = null;
-      pairingStatus = 'Pairing cancelled';
-      updatePairingUi();
+      setPairing('Pairing cancelled', null);
       log('Pairing cancelled');
     } catch (err) {
       log('cancelPairing failed: ' + err);
@@ -698,28 +578,17 @@ function initialize() {
   });
 
   setInterval(() => {
+    updateProgress();
     updateQualityBadges();
-    updateSyncStatus();
+    updateSyncInfo();
   }, 500);
+  setInterval(updateClock, 1000);
 
-  setInterval(() => {
-    $('clock').textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', hour12: false });
-  }, 1000);
-
-  $('clock').textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', hour12: false });
-  updatePairingUi();
-  updateSyncStatus();
-  setView('now');
+  updateClock();
+  setPairing(initialPairingStatus(), null);
+  requestAnimationFrame(() => setTvFocus($('playPause')));
   log('VIDAA Sendspin UI ready');
-
-  // Auto-connect once on app startup.
-  if (!autoConnectStarted) {
-    autoConnectStarted = true;
-    setTimeout(() => {
-      log('Auto-connect starting...');
-      connect();
-    }, 250);
-  }
+  start();
 }
 
 document.addEventListener('DOMContentLoaded', initialize);

@@ -7,243 +7,208 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="favicon.png">
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#071a2f">
+  <meta name="theme-color" content="#03101f">
   <style>
+    /* Everything is sized in rem; 1rem = 16px on a 1920px wide screen, so the
+       layout scales identically on 1280x720 and 1920x1080 TV browsers. */
     :root {
-      --bg:#03101f; --bg2:#071a2f; --panel:#0a1d33; --panel2:#0d2744;
-      --line:#1d2a41; --text:#f5f7fb; --muted:#909ab0; --purple:#2f6fed;
-      --purple2:#1849a9; --green:#46de70; --red:#ff5c68; --yellow:#e8bd58;
+      --bg:#03101f; --text:#f5f7fb; --muted:#9aa5bb; --dim:#5d6880;
+      --accent:#2f6fed; --accent2:#4d8dff; --focus:#78a9ff;
+      --panel:rgba(8,20,38,.94); --line:rgba(255,255,255,.08);
+      --green:#46de70; --yellow:#e8bd58; --red:#ff5c68;
+      font-size:calc(100vw / 120);
     }
     * { box-sizing:border-box; }
-    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#03101f; color:var(--text); font-family:Arial,Helvetica,sans-serif; }
-    button,input { font:inherit; }
-    button { color:inherit; }
-    .app { display:grid; grid-template-columns:300px 1fr; height:100vh; background:radial-gradient(circle at 60% 30%,#0c2b55 0,#071a2f 38%,#020b16 75%); }
-    .sidebar { border-right:1px solid #142038; padding:28px 24px; display:flex; flex-direction:column; background:linear-gradient(180deg,#04101e,#071a2f); }
-    .brand { font-size:34px; font-weight:700; display:flex; align-items:center; gap:14px; margin-bottom:40px; }
-    .brand-icon { width:44px; height:44px; border-radius:10px; object-fit:cover; flex:0 0 auto; }
-    .nav { display:flex; flex-direction:column; gap:10px; }
-    .nav-item { border:0;background:transparent;text-align:left;padding:18px 20px;border-radius:12px;font-size:22px;cursor:pointer;display:flex;align-items:center;gap:15px; }
-    .nav-item.active { background:linear-gradient(135deg,#1f5fbf,#174a99); }
-    .nav-item:focus,.control:focus,.action:focus,.settings-input:focus { outline:4px solid #78a9ff; outline-offset:3px; }
-    .nav-icon { width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#c7cee0;flex:0 0 28px; }
-    .nav-icon svg { width:24px;height:24px;display:block; }
-    .status-row { display:flex;align-items:center;gap:10px;font-size:18px;margin-bottom:18px; }
-    .dot,.tiny-dot { border-radius:50%;background:#5f687a;display:inline-block; }
-    .dot { width:14px;height:14px; } .tiny-dot{width:10px;height:10px;}
-    .dot.ok,.tiny-dot.ok { background:var(--green); box-shadow:0 0 10px rgba(70,222,112,.4); }
-    .dot.warn { background:var(--yellow); } .dot.bad { background:var(--red); }
-    .side-title{font-size:24px;margin-bottom:4px}.side-sub{font-size:17px;color:#b8c0d2;word-break:break-all}
-    .main { display:grid;grid-template-rows:1fr 136px;min-width:0; }
-    .content { position:relative;padding:28px 38px 20px;overflow:hidden;min-height:0; }
-    .clock { position:absolute;right:38px;top:28px;font-size:28px;z-index:5; }
-    .view { display:none;height:100%;min-height:0; } .view.active{display:block;}
-    .section-title { color:#5f9cff;font-size:18px;font-weight:700;letter-spacing:.04em;margin:42px 0 24px; }
-    .now-grid { display:grid;grid-template-columns:minmax(0,1fr);height:calc(100% - 90px); }
-    .hero { display:flex;flex-direction:column;min-width:0;max-width:1180px; }
-    .hero-top { display:grid;grid-template-columns:340px minmax(0,1fr);gap:44px;align-items:center; }
-    .album-art { width:340px;height:340px;border-radius:18px;background:linear-gradient(145deg,#161c2b,#060910);background-size:cover;background-position:center;box-shadow:0 20px 55px rgba(0,0,0,.35);position:relative;overflow:hidden; }
-    .album-art:not(.has-art)::after { content:'♪';position:absolute;inset:0;display:grid;place-items:center;font-size:130px;color:#2f6fed;opacity:.85; }
-    .track-title { font-size:42px;font-weight:700;margin-bottom:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-    .track-artist { font-size:30px;margin-bottom:12px; }
-    .track-album { font-size:21px;color:var(--muted);min-height:26px; }
-    .badges { display:flex;gap:10px;margin-top:25px;flex-wrap:wrap; }
-    .badges:empty { display:none; }
-    .badge { padding:9px 12px;border-radius:8px;background:#121d33;color:#c7cee0;font-size:16px; }
-    .progress { height:6px;border-radius:4px;background:#253149;margin:40px 0 12px;position:relative; }
-    .progress::before { content:'';position:absolute;left:0;top:0;bottom:0;width:28%;background:linear-gradient(90deg,#1f5fbf,#4d8dff);border-radius:4px; }
-    .time-row { display:flex;justify-content:space-between;color:#a9b1c2;font-size:16px; }
-    .controls { display:flex;align-items:center;justify-content:center;gap:28px;margin:22px 0; }
-    .control { border:0;background:transparent;font-size:34px;width:64px;height:64px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;flex:0 0 64px; }
-    .control svg { display:block;width:32px;height:32px;margin:0;flex:0 0 auto; }
-    .control-labeled > span:last-child { font-size:15px;color:#9eacc5;font-weight:400; }
-    .playpause-icon { display:flex;align-items:center;justify-content:center;width:34px;height:34px;line-height:1; }
-    .control.primary { width:86px;height:86px;flex:0 0 86px;background:linear-gradient(145deg,#2368d8,#164a9d);font-size:31px;display:flex;align-items:center;justify-content:center;padding:0; }
-    .control.primary > span:last-child { margin-top:4px; }
-    .play-pause-icon { display:grid;place-items:center;width:36px;height:36px; }
-    .play-pause-icon svg { width:36px;height:36px; }
-    .playpause-icon { display:flex;align-items:center;justify-content:center;width:34px;height:34px;line-height:1; }
-    .control.primary { width:86px;height:86px;flex:0 0 86px;background:linear-gradient(145deg,#2368d8,#164a9d);font-size:31px;display:flex;align-items:center;justify-content:center;padding:0; }
-    .volume-row { display:grid;grid-template-columns:50px 1fr 70px;gap:14px;align-items:center;margin:6px 10px 0; }
-    input[type=range] { accent-color:#2f6fed;width:100%; }
-    .card { border:1px solid var(--line);background:rgba(13,23,41,.88);border-radius:15px;padding:22px; }
-    .card-title { color:#5f9cff;font-size:16px;font-weight:700;margin-bottom:18px; }
-    .action { width:100%;border:1px solid #293650;background:#101a2d;border-radius:10px;padding:14px 15px;cursor:pointer;margin-top:17px;font-size:16px; }
-    .footer { margin:0 28px 26px;border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.94);display:grid;grid-template-columns:1.55fr 1.1fr 1.1fr 1fr 1.25fr;align-items:stretch;padding:0 28px;gap:0;min-height:112px; }
-    .footer-cell { min-width:0;border-right:1px solid #1d2940;padding:14px 22px 18px;display:grid;grid-template-rows:18px 26px minmax(18px,auto);align-content:start;min-height:112px; } .footer-cell:first-child{padding-left:0}.footer-cell:last-child{border-right:0}
-    .footer-label{font-size:14px;color:#5f9cff;font-weight:700;margin:0 0 4px 0;line-height:18px;height:18px;align-self:start}.footer-value{font-size:19px;line-height:24px;min-height:24px;white-space:normal;overflow-wrap:anywhere;margin:0;align-self:start}.footer-sub{font-size:14px;color:#8993aa;margin:2px 0 0 0;white-space:normal;overflow-wrap:anywhere;line-height:17px;min-height:17px;align-self:start}
-    .pair-layout { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr);gap:26px;padding-top:42px;height:calc(100% - 30px); }
-    .pair-main { overflow:auto;padding-right:4px; }
-    .pair-header { font-size:38px;font-weight:700;margin:0 0 8px; }
-    .pair-sub { color:var(--muted);font-size:19px;margin-bottom:26px; }
-    .data-card { border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.92);padding:20px;margin-bottom:16px; }
-    .data-label { color:#5f9cff;font-size:14px;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em; }
-    .data-value { font-family:monospace;font-size:17px;line-height:1.45;word-break:break-all;color:#f3f5fa; }
-    .data-value.pin { font-family:Arial,Helvetica,sans-serif;font-size:38px;font-weight:700;letter-spacing:.08em; }
-    .data-actions { display:flex;gap:10px;margin-top:14px; }
-    .small-btn { border:1px solid #30405e;background:#111d33;border-radius:8px;padding:10px 14px;cursor:pointer; }
-    .small-btn.primary{background:#1f5fbf;border-color:#3f80e8}.small-btn.danger{border-color:#7a3540;color:#ff8a93}
-    .pair-side .album-art { width:100%;height:auto;aspect-ratio:1/1;max-height:330px; }
-    .about-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px; }
-    .settings-main { max-width:980px;padding-top:42px;height:100%;overflow-y:auto;padding-right:18px;padding-bottom:44px;scrollbar-gutter:stable; }
-    .settings-row { margin-bottom:22px; }
-    .connection-card { margin-bottom:16px; }
-    .connection-label { display:block; margin:18px 0 8px; color:#a0a9bd; }
-    .connection-card .settings-input { margin-bottom:2px; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; }
+    button,input { font:inherit; color:inherit; }
+    button { border:0; background:transparent; cursor:pointer; padding:0; }
+    button:focus,input:focus,[tabindex]:focus { outline:.25rem solid var(--focus); outline-offset:.2rem; }
+    svg { display:block; }
 
-    .settings-row label { display:block;color:#a0a9bd;margin-bottom:8px;font-size:16px; }
-    .settings-input { width:100%;border:1px solid #2b3954;background:#0e1829;color:#fff;border-radius:9px;padding:14px;font-size:18px; }
-    #debugLog { height:220px;overflow:auto;background:#050912;border-radius:10px;padding:14px;font:14px monospace;white-space:pre-wrap;color:#b8c2d7; }
-    .settings-end { height:140px; min-height:140px; width:100%; background:transparent; border:0; border-radius:0; outline:none !important; box-shadow:none !important; padding:0; margin:0; }
-    .settings-end:focus { background:transparent !important; outline:none !important; box-shadow:none !important; }
-    #debugLog:focus { outline:4px solid #78a9ff; outline-offset:3px; box-shadow:0 0 22px rgba(47,111,237,.42); }
-    .toast { position:fixed;left:50%;bottom:35px;transform:translateX(-50%) translateY(30px);opacity:0;background:#1c2b43;border:1px solid #41516f;padding:12px 18px;border-radius:9px;transition:.2s;pointer-events:none;z-index:100; }
-    .toast.show { opacity:1;transform:translateX(-50%) translateY(0); }
-    @media (max-width:1100px) {
-      .app{grid-template-columns:230px 1fr}.sidebar{padding:22px 16px}.brand{font-size:27px}.nav-item{font-size:18px;padding:15px}
-      .now-grid{grid-template-columns:1fr}.hero-top{grid-template-columns:280px 1fr}.album-art{width:280px;height:280px}
-      .footer { margin:0 28px 26px;border:1px solid var(--line);border-radius:15px;background:rgba(13,23,41,.94);display:grid;grid-template-columns:1.55fr 1.1fr 1.1fr 1fr 1.25fr;align-items:stretch;padding:0 28px;gap:0;min-height:112px; }.footer-cell:nth-child(4),.footer-cell:nth-child(5){display:none}
-    }
+    /* Backdrop: blurred artwork behind a dark vignette */
+    .backdrop { position:fixed; inset:-10%; background:#071a2f center/cover no-repeat; filter:blur(4rem) saturate(1.3); opacity:.45; transition:background-image .6s; }
+    .backdrop:not(.has-art) { background-image:radial-gradient(circle at 60% 30%,#0c2b55 0,#071a2f 40%,#020b16 80%); filter:none; opacity:1; }
+    .vignette { position:fixed; inset:0; background:radial-gradient(ellipse at 35% 45%,rgba(3,16,31,.35) 0,rgba(3,16,31,.88) 75%); }
+
+    .screen { position:relative; height:100vh; display:flex; flex-direction:column; padding:2.5rem 4rem 3rem; }
+
+    /* Top bar */
+    .topbar { display:flex; align-items:center; gap:1.5rem; height:3.5rem; }
+    .brand { display:flex; align-items:center; gap:.9rem; font-size:1.5rem; font-weight:700; color:var(--muted); }
+    .brand img { width:2.2rem; height:2.2rem; border-radius:.5rem; }
+    .group { font-weight:400; color:var(--dim); }
+    .spacer { flex:1; }
+    .status { display:flex; align-items:center; gap:.6rem; font-size:1.15rem; color:var(--muted); }
+    .dot { width:.75rem; height:.75rem; border-radius:50%; background:var(--dim); }
+    .dot.ok { background:var(--green); box-shadow:0 0 .6rem rgba(70,222,112,.5); }
+    .dot.warn { background:var(--yellow); } .dot.bad { background:var(--red); }
+    .clock { font-size:1.6rem; font-variant-numeric:tabular-nums; }
+    .icon-btn { width:3.5rem; height:3.5rem; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+    .icon-btn svg { width:1.9rem; height:1.9rem; }
+    .icon-btn:focus { color:var(--text); background:rgba(255,255,255,.08); }
+
+    /* Now playing */
+    .now { flex:1; min-height:0; display:flex; align-items:center; gap:4.5rem; }
+    .art { flex:0 0 auto; width:min(30rem,52vh); height:min(30rem,52vh); border-radius:1.25rem; background:linear-gradient(145deg,#132440,#060d18) center/cover no-repeat; box-shadow:0 1.5rem 4rem rgba(0,0,0,.55); position:relative; }
+    .art:not(.has-art)::after { content:'\266A'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10rem; color:var(--accent); opacity:.7; }
+    .meta { flex:1; min-width:0; }
+    .title { font-size:4.25rem; font-weight:700; line-height:1.1; margin-bottom:1.25rem; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .artist { font-size:2.4rem; margin-bottom:.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .album { font-size:1.6rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:2rem; }
+    .badges { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:2rem; }
+    .badges:empty { display:none; }
+    .badge { padding:.45rem .8rem; border-radius:.45rem; background:rgba(255,255,255,.08); color:#c7cee0; font-size:1.05rem; letter-spacing:.03em; }
+
+    /* Transport */
+    .transport { display:flex; flex-direction:column; gap:1.25rem; }
+    .progress { height:.4rem; border-radius:.2rem; background:rgba(255,255,255,.14); overflow:hidden; }
+    .progress-fill { height:100%; width:0; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+    .times { display:flex; justify-content:space-between; font-size:1.1rem; color:var(--muted); font-variant-numeric:tabular-nums; }
+    .controls { display:flex; align-items:center; justify-content:center; gap:2rem; position:relative; }
+    .ctl { width:4.25rem; height:4.25rem; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#dfe5f2; }
+    .ctl svg { width:2.1rem; height:2.1rem; }
+    .ctl.toggle { color:var(--dim); position:relative; }
+    .ctl.toggle.on { color:var(--accent2); }
+    .ctl.toggle.on::after { content:''; position:absolute; bottom:.35rem; left:50%; width:.35rem; height:.35rem; margin-left:-.175rem; border-radius:50%; background:var(--accent2); }
+    .ctl .one { position:absolute; font-size:.8rem; font-weight:700; top:1.45rem; display:none; }
+    .ctl.repeat-one .one { display:block; }
+    .ctl.primary { width:5.5rem; height:5.5rem; background:linear-gradient(145deg,#2368d8,#164a9d); color:#fff; }
+    .ctl.primary svg { width:2.5rem; height:2.5rem; }
+    .ctl:focus { background:rgba(255,255,255,.1); }
+    .ctl.primary:focus { background:linear-gradient(145deg,#3a7ff0,#1d5bc0); }
+    .volume { position:absolute; right:0; display:flex; align-items:center; gap:.9rem; font-size:1.1rem; color:var(--muted); }
+    .volume input { width:11rem; accent-color:var(--accent); }
+    .volume .ctl { width:3.25rem; height:3.25rem; }
+    .volume .ctl svg { width:1.6rem; height:1.6rem; }
+    .volume input.adjusting { outline-color:var(--accent2); outline-width:.35rem; }
+    .volume:has(.adjusting) .vol-value { color:var(--text); font-weight:700; }
+    .vol-value { width:3.5rem; text-align:right; font-variant-numeric:tabular-nums; }
+
+    /* Notice shown while no server is known / pairing is required */
+    .notice { position:absolute; left:50%; top:6.5rem; transform:translateX(-50%); padding:.8rem 1.4rem; border-radius:2rem; background:var(--panel); border:1px solid var(--line); font-size:1.15rem; color:var(--muted); display:none; }
+    .notice.show { display:block; }
+
+    /* Settings drawer */
+    .scrim { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; }
+    .drawer { position:fixed; top:0; right:0; bottom:0; width:46rem; max-width:100%; background:var(--panel); border-left:1px solid var(--line); padding:2.5rem 2.5rem 0; display:none; flex-direction:column; }
+    body.settings-open .scrim { display:block; }
+    body.settings-open .drawer { display:flex; }
+    .drawer-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.75rem; }
+    .drawer-head h1 { margin:0; font-size:2.2rem; }
+    .drawer-body { flex:1; overflow-y:auto; padding-bottom:3rem; }
+    .section { border:1px solid var(--line); border-radius:1rem; background:rgba(255,255,255,.03); padding:1.4rem 1.5rem; margin-bottom:1.25rem; }
+    .label { color:#5f9cff; font-size:.9rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; margin-bottom:.6rem; }
+    .hint { color:var(--muted); font-size:1.05rem; line-height:1.45; margin-bottom:1rem; }
+    .value { font-size:1.15rem; line-height:1.4; margin-bottom:1rem; overflow-wrap:break-word; }
+    .value.mono { font-family:monospace; font-size:1rem; color:#c7cee0; }
+    .pin { font-size:4rem; font-weight:700; letter-spacing:.12em; margin:.25rem 0 1rem; font-variant-numeric:tabular-nums; }
+    .pin.empty { font-size:2rem; color:var(--dim); letter-spacing:0; }
+    .actions { display:flex; gap:.75rem; flex-wrap:wrap; }
+    .btn { border:1px solid #30405e; background:#111d33; border-radius:.6rem; padding:.8rem 1.2rem; font-size:1.1rem; }
+    .btn.primary { background:#1f5fbf; border-color:#3f80e8; }
+    .kv { display:flex; justify-content:space-between; gap:1rem; font-size:1.05rem; padding:.45rem 0; border-top:1px solid var(--line); }
+    .kv:first-of-type { border-top:0; }
+    .kv span:first-child { color:var(--muted); }
+    .kv span:last-child { text-align:right; word-break:break-all; }
+    .kv .mono { font-family:monospace; font-size:.95rem; color:#c7cee0; white-space:nowrap; }
+    #debugLog { height:16rem; overflow:auto; margin:0; background:#050912; border-radius:.6rem; padding:.9rem; font:.85rem/1.4 monospace; white-space:pre-wrap; color:#b8c2d7; }
   </style>
 </head>
 <body>
-<div class="app">
-  <aside class="sidebar">
-    <div class="brand"><img class="brand-icon" src="favicon.png" alt="">Sendspin</div>
-    <nav class="nav">
-      <button class="nav-item active" data-view="now" tabindex="0"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V6.8l9-2.2v10.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="3" fill="currentColor"/><circle cx="15.5" cy="15" r="3" fill="currentColor"/></svg></span>Now Playing</button>
-      <button class="nav-item" data-view="settings" tabindex="0"><span class="nav-icon">⚙</span>Settings</button>
-      <button class="nav-item" data-view="about" tabindex="0"><span class="nav-icon">ⓘ</span>About</button>
-    </nav>
-  </aside>
+<div id="backdrop" class="backdrop"></div>
+<div class="vignette"></div>
 
-  <main class="main">
-    <section class="content">
-      <div id="clock" class="clock">--:--</div>
+<div class="screen">
+  <header class="topbar">
+    <div class="brand"><img src="favicon.png" alt="">Sendspin<span id="groupName" class="group"></span></div>
+    <div class="spacer"></div>
+    <div class="status"><span id="connectionDot" class="dot"></span><span id="connectionText">Searching…</span></div>
+    <div id="clock" class="clock">--:--</div>
+    <button id="openSettings" class="icon-btn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
 
-      <div id="view-now" class="view active">
-        <div class="section-title">NOW PLAYING</div>
-        <div class="now-grid">
-          <div class="hero">
-            <div class="hero-top">
-              <div id="albumArt" class="album-art"></div>
-              <div>
-                <div id="trackTitle" class="track-title">Nothing playing</div>
-                <div id="trackArtist" class="track-artist">Music Assistant</div>
-                <div id="trackAlbum" class="track-album"></div>
-                <div id="qualityBadges" class="badges"></div>
-              </div>
-            </div>
-            <div class="progress"></div>
-            <div class="time-row"><span>—</span><span>—</span></div>
-            <div class="controls">
-              <button id="shuffle" class="control" title="Shuffle" aria-label="Shuffle" tabindex="0">
-                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
-                  <path d="M16 3h5v5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M4 6h2.5c2.2 0 3.6 1 5.1 3l.8 1.1c1.6 2.2 3 3.9 5.6 3.9H21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-                  <path d="M16 16l5 5m0-5v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M4 18h2.5c1.8 0 3.1-.7 4.3-2.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-                </svg>
-              </button>
-              <button id="previous" class="control" title="Previous" aria-label="Previous" tabindex="0">
-                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
-                  <path d="M6 5v14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-                  <path d="M18 6.5L9 12l9 5.5z" fill="currentColor"/>
-                </svg>
-              </button>
-              <button id="playPause" class="control primary" title="Play/Pause" aria-label="Play/Pause" tabindex="0">
-                <span id="playPauseIcon" class="playpause-icon">
-                  <svg class="icon-play" viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
-                    <path d="M8 5.5L19 12 8 18.5z" fill="currentColor"/>
-                  </svg>
-                </span>
-              </button>
-              <button id="next" class="control" title="Next" aria-label="Next" tabindex="0">
-                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
-                  <path d="M18 5v14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-                  <path d="M6 6.5L15 12l-9 5.5z" fill="currentColor"/>
-                </svg>
-              </button>
-              <button id="repeat" class="control" title="Repeat" aria-label="Repeat" tabindex="0">
-                <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
-                  <path d="M17 4l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M20 7H9a5 5 0 0 0-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-                  <path d="M7 20l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M4 17h11a5 5 0 0 0 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-                </svg>
-              </button>
-            </div>
-            <div class="volume-row">
-              <button id="muteBtn" class="control" style="font-size:22px" tabindex="0">🔊</button>
-              <input id="volumeSlider" type="range" min="0" max="100" value="100" tabindex="0">
-              <div id="volumeValue">100%</div>
-            </div>
-          </div>
+  <div id="notice" class="notice"></div>
 
-        </div>
+  <main class="now">
+    <div id="albumArt" class="art"></div>
+    <div class="meta">
+      <div id="trackTitle" class="title">Nothing playing</div>
+      <div id="trackArtist" class="artist"></div>
+      <div id="trackAlbum" class="album"></div>
+      <div id="qualityBadges" class="badges"></div>
+    </div>
+  </main>
+
+  <footer class="transport">
+    <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+    <div class="times"><span id="timeElapsed">0:00</span><span id="timeTotal">0:00</span></div>
+    <div class="controls">
+      <button id="shuffle" class="ctl toggle" title="Shuffle" aria-label="Shuffle">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="previous" class="ctl" title="Previous" aria-label="Previous">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18 6.5 9 12l9 5.5z" fill="currentColor"/></svg>
+      </button>
+      <button id="playPause" class="ctl primary" title="Play/Pause" aria-label="Play/Pause">
+        <svg id="iconPlay" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5 19 12 8 18.5z" fill="currentColor"/></svg>
+        <svg id="iconPause" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+      </button>
+      <button id="next" class="ctl" title="Next" aria-label="Next">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M6 6.5 15 12l-9 5.5z" fill="currentColor"/></svg>
+      </button>
+      <button id="repeat" class="ctl toggle" title="Repeat" aria-label="Repeat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="one">1</span>
+      </button>
+
+      <div class="volume">
+        <button id="muteBtn" class="ctl" title="Mute" aria-label="Mute">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path id="volWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path id="volMuted" d="m16 9 6 6m0-6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"/></svg>
+        </button>
+        <input id="volumeSlider" type="range" min="0" max="100" value="100" aria-label="Volume">
+        <span id="volumeValue" class="vol-value">100%</span>
       </div>
+    </div>
+  </footer>
+</div>
 
-      <div id="view-settings" class="view">
-        <div class="settings-main">
-          <h1 class="pair-header">Settings</h1>
-          <div class="pair-sub">Connection, pairing and diagnostics.</div>
-          <div class="data-card connection-card">
-            <div class="data-label">Connection</div>
-            <div class="pair-sub" style="margin:0 0 16px">Direct connection to the Sendspin WebSocket endpoint.</div>
-            <label class="data-label connection-label" for="wsUrl">Sendspin WebSocket</label>
-            <input id="wsUrl" class="settings-input" value="ws://homeassistant.lan:8927/sendspin" tabindex="0">
-            <div class="data-actions">
-              <button id="connectBtn" class="small-btn primary" tabindex="0">Connect</button>
-              <button id="disconnectBtn" class="small-btn" tabindex="0">Disconnect</button>
-            </div>
-          </div>
-
-          <div class="data-card" style="margin-top:25px">
-            <div class="data-label">Pairing</div>
-            <div class="pair-sub" style="margin:0 0 16px">Pair this VIDAA player using the dynamic PIN.</div>
-            <div class="data-label" style="margin-top:14px">Status</div>
-            <div id="pairStatus" class="data-value">Idle</div>
-            <div class="data-label" style="margin-top:20px">Dynamic PIN</div>
-            <div id="pairPin" class="data-value pin">—</div>
-            <div class="data-actions">
-              <button id="openPairing" class="small-btn primary" tabindex="0">Allow pairing</button>
-              <button id="cancelPairing" class="small-btn" tabindex="0">Cancel</button>
-              <button id="copyPin" class="small-btn" tabindex="0">Copy PIN</button>
-            </div>
-            <div class="data-label" style="margin-top:22px">Client ID</div>
-            <div id="pairClientId" class="data-value">—</div>
-            <div class="data-actions"><button id="copyClientId" class="small-btn" tabindex="0">Copy client ID</button></div>
-          </div>
-          <div class="data-card" style="margin-top:25px">
-            <div class="data-label">Debug log</div>
-            <pre id="debugLog" tabindex="0"></pre>
-          </div>
-          <div id="settingsEnd" class="settings-end" tabindex="0" aria-label="End of settings"><span aria-hidden="true">&nbsp;</span></div>
-        </div>
-      </div>
-
-      <div id="view-about" class="view">
-        <div class="settings-main">
-          <h1 class="pair-header">Sendspin for VIDAA</h1>
-          <div class="pair-sub">A browser-based Sendspin player for VIDAA TVs.</div>
-          <div class="about-grid">
-            <div class="data-card"><div class="data-label">Version</div><div class="data-value">1.0.0</div></div>
-          </div>
-        </div>
+<div class="scrim"></div>
+<aside id="settings" class="drawer" aria-label="Settings">
+  <div class="drawer-head">
+    <h1>Settings</h1>
+    <button id="closeSettings" class="icon-btn" title="Close" aria-label="Close settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div id="settingsBody" class="drawer-body">
+    <section class="section">
+      <div class="label">Pairing</div>
+      <div class="hint">Start pairing in Music Assistant, then enter the PIN shown here. If Music Assistant asks for confirmation on the device, press <b>Allow pairing</b>.</div>
+      <div id="pairStatus" class="value">Not paired yet</div>
+      <div id="pairPin" class="pin empty">No PIN requested</div>
+      <div class="actions">
+        <button id="openPairing" class="btn primary">Allow pairing</button>
+        <button id="cancelPairing" class="btn">Cancel</button>
       </div>
     </section>
 
-    <footer class="footer">
-      <div class="footer-cell"><div class="footer-label">STATUS</div><div class="footer-value" style="display:flex;align-items:center;gap:10px"><span id="connectionDot" class="dot"></span><span id="connectionText">Disconnected</span></div><div id="footerServer" class="footer-sub">Music Assistant · homeassistant.lan:8927/sendspin</div></div>
-      <div class="footer-cell"><div class="footer-label">SYNC</div><div id="footerSync" class="footer-value">—</div><div id="footerSyncSub" class="footer-sub">Clock sync pending</div></div>
-      <div class="footer-cell"><div class="footer-label">BUFFER</div><div class="footer-value">250 ms min</div><div class="footer-sub">Jitter target</div></div>
-      <div class="footer-cell"><div class="footer-label">VOLUME</div><div id="footerVolume" class="footer-value">100%</div></div>
-      <div class="footer-cell"><div class="footer-label">CLIENT</div><div class="footer-value">VIDAA TV</div><div class="footer-sub">Sendspin UI v1.0.0</div></div>
-    </footer>
-  </main>
-</div>
+    <section class="section">
+      <div class="label">Connection</div>
+      <div class="kv"><span>Server</span><span id="serverName">—</span></div>
+      <div class="kv"><span>Address</span><span id="serverUrl">—</span></div>
+      <div class="kv"><span>Sync</span><span id="syncInfo">—</span></div>
+      <div class="kv"><span>Client ID</span><span id="clientId" class="mono">—</span></div>
+      <div class="actions" style="margin-top:1rem"><button id="reconnectBtn" class="btn">Search again</button></div>
+    </section>
 
-<div id="copyToast" class="toast">Copied</div>
+    <section class="section">
+      <div class="label">Debug log</div>
+      <pre id="debugLog" tabindex="0"></pre>
+    </section>
+  </div>
+</aside>
 
 <script src="sendspin.js"></script>
 </body>

@@ -5,10 +5,12 @@
   "description": "A browser-based VIDAA Sendspin player",
   "scripts": {
     "build": "node build.mjs",
-    "serve": "npx http-server dist -p 8080 -c-1"
+    "serve": "npm run build && node server/index.mjs",
+    "start": "node server/index.mjs"
   },
   "dependencies": {
-    "@sendspin/sendspin-js": "latest"
+    "@sendspin/sendspin-js": "^5.0.0",
+    "bonjour-service": "^1.4.4"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

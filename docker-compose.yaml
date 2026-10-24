@@ -2,9 +2,10 @@ services:
   vidaa-sendspin:
     build: .
     container_name: vidaa-sendspin
-    network_mode: bridge
+    # Host networking is required for mDNS discovery of the Music Assistant
+    # Sendspin server (multicast does not cross Docker's bridge network).
+    network_mode: host
     environment:
       - TZ=Europe/Berlin
-    ports:
-      - 8080:80/tcp
+      - PORT=8080
     restart: unless-stopped
