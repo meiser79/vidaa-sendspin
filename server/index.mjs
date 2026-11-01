@@ -9,6 +9,8 @@ import { Bonjour } from 'bonjour-service';
 const PORT = Number(process.env.PORT) || 8080;
 const ROOT = resolve(process.env.STATIC_DIR || join(fileURLToPath(import.meta.url), '../../dist'));
 const REQUERY_MS = 30000;
+const ART_TIMEOUT_MS = 8000;
+const ART_MAX_BYTES = 8 * 1024 * 1024;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -17,7 +19,9 @@ const MIME = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
 };
 
 // Keyed by mDNS instance name.
@@ -79,7 +83,36 @@ async function serveStatic(req, res) {
   }
 }
 
+// Re-serves artwork from our own origin so the UI can read its pixels for
+// colour extraction. Only http(s) URLs that return an image are passed on.
+async function proxyArt(req, res) {
+  let target;
+  try {
+    target = new URL(new URL(req.url, 'http://x').searchParams.get('url'));
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('bad scheme');
+  } catch (_) {
+    res.writeHead(400).end();
+    return;
+  }
+  try {
+    const upstream = await fetch(target, { signal: AbortSignal.timeout(ART_TIMEOUT_MS) });
+    const type = upstream.headers.get('content-type') || '';
+    const length = Number(upstream.headers.get('content-length')) || 0;
+    if (!upstream.ok || !type.startsWith('image/') || length > ART_MAX_BYTES) throw new Error('rejected');
+    const body = Buffer.from(await upstream.arrayBuffer());
+    if (body.length > ART_MAX_BYTES) throw new Error('too large');
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'max-age=3600' });
+    res.end(body);
+  } catch (_) {
+    res.writeHead(502).end();
+  }
+}
+
 createServer((req, res) => {
+  if (req.url.startsWith('/api/art')) {
+    proxyArt(req, res);
+    return;
+  }
   if (req.url.startsWith('/api/server')) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ server: currentServer(), servers: [...servers.values()] }));

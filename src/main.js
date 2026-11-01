@@ -12,6 +12,19 @@ const SEEK_STEP_MS = 10000;
 const SEEK_COMMIT_DELAY_MS = 700;
 // Keep showing the target until the server's progress catches up.
 const SEEK_HOLD_MS = 1500;
+// Controls fade out after this long without a remote key press.
+const IDLE_MS = 5000;
+// While paused this long without input, dim the screen and drift the layout.
+const DIM_AFTER_MS = 2 * 60 * 1000;
+const DRIFT_EVERY_MS = 60 * 1000;
+const ART_PROXY = 'api/art?url=';
+// Neutral graphite: used without artwork and for black-and-white artwork.
+const NEUTRAL_PALETTE = { accent: '#e6e9f0', glowA: 'hsl(220,8%,20%)', glowB: 'hsl(220,8%,12%)' };
+// A track change waits this long at most for artwork and colours to load.
+const TRACK_SWAP_TIMEOUT_MS = 3000;
+const PALETTE_CACHE_SIZE = 30;
+// Reveal the screen at the latest after this long, even without a track.
+const BOOT_TIMEOUT_MS = 4000;
 
 let player = null;
 let server = null;
@@ -23,6 +36,18 @@ let lastFocusBeforeSettings = null;
 let seekTarget = null;
 let seekCommitTimer = null;
 let seekHoldTimer = null;
+let idleTimer = null;
+let focusBeforeIdle = null;
+let paletteUrl;
+let backdropLayer = 0;
+let artUrl;
+let artLayer = 0;
+let trackKey = null;
+let wantedTrackKey = null;
+const paletteCache = new Map();
+let lastInputAt = Date.now();
+let pausedSince = null;
+let driftTimer = null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,14 +85,50 @@ function formatPin(pin) {
   return p;
 }
 
-function setArt(el, url) {
-  if (url) {
-    el.style.backgroundImage = `url("${String(url).replace(/"/g, '\\"')}")`;
-    el.classList.add('has-art');
-  } else {
-    el.style.backgroundImage = '';
-    el.classList.remove('has-art');
-  }
+// Resolves with the loaded image, or null if there is none or it failed.
+function loadImage(src) {
+  return new Promise((resolve) => {
+    if (!src) {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+// Crossfades to the new artwork (preloaded by updateTrack).
+function setArtwork(url) {
+  if (url === artUrl) return;
+  artUrl = url;
+  const art = $('albumArt');
+  const layers = art.querySelectorAll('.art-layer');
+  artLayer = 1 - artLayer;
+  const next = layers[artLayer];
+  next.style.backgroundImage = url ? `url("${String(url).replace(/"/g, '\\"')}")` : '';
+  next.classList.toggle('show', !!url);
+  layers[1 - artLayer].classList.remove('show');
+  art.classList.toggle('has-art', !!url);
+}
+
+// Updates title/artist/album and replays the rise animation on track change.
+function setTrackText(title, artist, album) {
+  const key = [title, artist, album].join('\u0000');
+  if (key === trackKey) return;
+  const first = trackKey === null;
+  trackKey = key;
+  $('trackTitle').textContent = title;
+  $('trackArtist').textContent = artist;
+  $('trackAlbum').textContent = album;
+  if (first) return;
+  ['trackTitle', 'trackArtist', 'trackAlbum'].forEach((id) => {
+    const el = $(id);
+    el.classList.remove('rise');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('rise');
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -123,19 +184,12 @@ function updatePlayerState(state) {
   $('volMuted').style.display = muted ? '' : 'none';
 
   const meta = state?.serverState?.metadata || {};
-  $('trackTitle').textContent = meta.title || 'Nothing playing';
-  $('trackArtist').textContent = meta.artist || '';
-  $('trackAlbum').textContent = [meta.album, meta.year].filter(Boolean).join(' · ');
-  setArt($('albumArt'), meta.artwork_url);
-  setArt($('backdrop'), meta.artwork_url);
+  updateTrack(meta);
 
   $('shuffle').classList.toggle('on', !!meta.shuffle);
   const repeat = meta.repeat || 'off';
   $('repeat').classList.toggle('on', repeat !== 'off');
   $('repeat').classList.toggle('repeat-one', repeat === 'one');
-
-  const group = state?.groupState?.group_name;
-  $('groupName').textContent = group ? ' · ' + group : '';
 
   const metadataDebug = JSON.stringify(meta);
   if (metadataDebug !== '{}' && metadataDebug !== lastMetadataDebug) {
@@ -209,35 +263,141 @@ function commitSeek() {
   seekHoldTimer = setTimeout(() => { seekTarget = null; updateProgress(); }, SEEK_HOLD_MS);
 }
 
-function updateQualityBadges() {
-  const container = $('qualityBadges');
-  const format = player?.currentFormat;
-  const values = [];
+// ---------------------------------------------------------------------------
+// Artwork colours
 
-  if (format) {
-    const codec = String(format.codec || '').toLowerCase();
-    if (codec) values.push(codec.toUpperCase());
-    if (format.sample_rate > 0) {
-      const khz = format.sample_rate / 1000;
-      values.push((Number.isInteger(khz) ? khz : khz.toFixed(1)) + ' kHz');
-    }
-    // bit_depth is meaningful for PCM/FLAC, not Opus.
-    if (format.bit_depth > 0 && codec !== 'opus') values.push(format.bit_depth + '-bit');
-    if (format.channels === 1) values.push('Mono');
-    else if (format.channels === 2) values.push('Stereo');
-    else if (format.channels > 2) values.push(format.channels + ' ch');
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function hsl(h, s, l) {
+  return `hsl(${Math.round(h)},${Math.round(s * 100)}%,${Math.round(l * 100)}%)`;
+}
+
+// Buckets the artwork's pixels by hue, weighted towards saturated mid-tones,
+// and derives an accent plus two dark backdrop glows from the strongest hues.
+function paletteFromImage(img) {
+  const size = 32;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, size, size);
+  const data = ctx.getImageData(0, 0, size, size).data;
+
+  const buckets = [];
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
+    if (s < 0.18 || l < 0.12 || l > 0.9) continue;
+    const key = Math.floor(h / 30) % 12;
+    const weight = s * (1 - Math.abs(l - 0.5) * 1.4);
+    const b = buckets[key] || (buckets[key] = { weight: 0, r: 0, g: 0, b: 0 });
+    b.weight += weight;
+    b.r += data[i] * weight;
+    b.g += data[i + 1] * weight;
+    b.b += data[i + 2] * weight;
   }
 
-  const key = values.join('|');
-  if (container.dataset.key === key) return;
-  container.dataset.key = key;
-  // innerHTML/appendChild instead of replaceChildren for older VIDAA engines.
-  container.innerHTML = '';
-  values.forEach((value) => {
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = value;
-    container.appendChild(badge);
+  const ranked = buckets
+    .map((b, key) => b && { key, weight: b.weight, hsl: rgbToHsl(b.r / b.weight, b.g / b.weight, b.b / b.weight) })
+    .filter(Boolean)
+    .sort((a, b) => b.weight - a.weight);
+
+  if (!ranked.length) return NEUTRAL_PALETTE;
+
+  const first = ranked[0];
+  const hueDistance = (a, b) => Math.min(Math.abs(a - b), 12 - Math.abs(a - b));
+  const second = ranked.find((b) => hueDistance(b.key, first.key) >= 2) || first;
+  const [h1, s1] = first.hsl;
+  const [h2, s2] = second.hsl;
+  return {
+    accent: hsl(h1, clamp(s1, 0.5, 0.85), 0.64),
+    glowA: hsl(h1, clamp(s1, 0.35, 0.7), 0.26),
+    glowB: hsl(h2, clamp(s2, 0.3, 0.65), 0.17)
+  };
+}
+
+function applyPalette(palette) {
+  document.documentElement.style.setProperty('--accent', palette.accent);
+  const layers = [$('backdropA'), $('backdropB')];
+  backdropLayer = 1 - backdropLayer;
+  const next = layers[backdropLayer];
+  next.style.backgroundImage =
+    `radial-gradient(ellipse 75% 85% at 15% 30%,${palette.glowA} 0,transparent 70%),` +
+    `radial-gradient(ellipse 65% 75% at 88% 90%,${palette.glowB} 0,transparent 70%)`;
+  next.classList.add('show');
+  layers[1 - backdropLayer].classList.remove('show');
+}
+
+function setPalette(url, palette) {
+  if (url === paletteUrl) return;
+  paletteUrl = url;
+  applyPalette(palette);
+}
+
+// The artwork is loaded through our own server so the canvas may read its
+// pixels (artwork hosts rarely send CORS headers). Always resolves.
+async function loadPalette(url) {
+  if (!url) return NEUTRAL_PALETTE;
+  if (paletteCache.has(url)) return paletteCache.get(url);
+  const img = await loadImage(ART_PROXY + encodeURIComponent(url));
+  let palette = NEUTRAL_PALETTE;
+  if (img) {
+    try {
+      palette = paletteFromImage(img);
+    } catch (err) {
+      log('Palette failed: ' + err);
+    }
+  }
+  if (paletteCache.size >= PALETTE_CACHE_SIZE) paletteCache.delete(paletteCache.keys().next().value);
+  paletteCache.set(url, palette);
+  return palette;
+}
+
+function finishBoot() {
+  document.body.classList.remove('booting');
+}
+
+// Loads artwork and colours first, then switches text, artwork and colours
+// in one go so the track change reads as a single transition.
+function updateTrack(meta) {
+  const title = meta.title || 'Nothing playing';
+  const artist = meta.artist || '';
+  const album = [meta.album, meta.year].filter(Boolean).join(' · ');
+  const url = meta.artwork_url || null;
+  const key = [title, artist, album, url].join('\u0000');
+  if (key === wantedTrackKey) return;
+  wantedTrackKey = key;
+
+  const palette = loadPalette(url);
+  const ready = Promise.all([loadImage(url), palette]);
+  const timeout = new Promise((resolve) => setTimeout(resolve, TRACK_SWAP_TIMEOUT_MS));
+  Promise.race([ready, timeout]).then(() => {
+    if (key !== wantedTrackKey) return;
+    setTrackText(title, artist, album);
+    setArtwork(url);
+    // Normally already resolved; after a timeout the colours follow later.
+    palette.then((p) => {
+      if (key !== wantedTrackKey) return;
+      setPalette(url, p);
+      if (meta.title) finishBoot();
+    });
   });
 }
 
@@ -328,7 +488,8 @@ function createPlayer(target) {
     clientName: 'VIDAA TV',
     productName: 'VIDAA Sendspin',
     correctionMode: 'sync',
-    unpairedAccess: true,
+    // Only paired servers may play; pair once via Settings.
+    unpairedAccess: false,
     pinOutChannels: ['display'],
     minPinLength: 6,
 
@@ -427,6 +588,7 @@ function settingsOpen() {
 }
 
 function openSettings(focusTarget) {
+  wake();
   if (!settingsOpen()) {
     lastFocusBeforeSettings = document.activeElement;
     document.body.classList.add('settings-open');
@@ -438,6 +600,7 @@ function openSettings(focusTarget) {
 function closeSettings() {
   if (!settingsOpen()) return;
   document.body.classList.remove('settings-open');
+  wake();
   const target = lastFocusBeforeSettings && isVisible(lastFocusBeforeSettings)
     ? lastFocusBeforeSettings
     : $('playPause');
@@ -510,11 +673,10 @@ function moveFocus(direction) {
   if (best) setTvFocus(best);
 }
 
-// Left/Right only change the volume or seek after OK is pressed on the
-// slider or progress bar, so focus can still move past them.
-function setAdjusting(el, on) {
-  el.classList.toggle('adjusting', on);
-  if (!on && el === $('seekBar')) commitSeek();
+// Left/Right only change the volume after OK is pressed on the slider, so
+// focus can still move past it to the other controls.
+function setAdjusting(input, on) {
+  input.classList.toggle('adjusting', on);
 }
 
 function nudgeRange(input, delta) {
@@ -529,27 +691,95 @@ function scrollLog(el, delta) {
   return el.scrollTop !== before;
 }
 
+// ---------------------------------------------------------------------------
+// Idle mode: controls fade out, leaving artwork and metadata
+
+function isIdle() {
+  return document.body.classList.contains('idle');
+}
+
+function goIdle() {
+  if (settingsOpen()) {
+    wake();
+    return;
+  }
+  // Blur so no focus ring is left on the visible progress bar; blur also ends
+  // any volume/seek adjustment.
+  focusBeforeIdle = document.activeElement;
+  if (focusBeforeIdle && focusBeforeIdle.blur) focusBeforeIdle.blur();
+  document.body.classList.add('idle');
+}
+
+// Shows the controls and restarts the idle timer. Returns true if the screen
+// was idle, so the key press that woke it is not also acted on.
+function wake() {
+  lastInputAt = Date.now();
+  undim();
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(goIdle, IDLE_MS);
+  if (!isIdle()) return false;
+  document.body.classList.remove('idle');
+  const restorable = focusBeforeIdle && focusBeforeIdle !== document.body && document.body.contains(focusBeforeIdle);
+  const target = restorable ? focusBeforeIdle : $('playPause');
+  setTvFocus(target);
+  return true;
+}
+
+function drift() {
+  const x = (Math.random() * 2 - 1) * 2;
+  const y = (Math.random() * 2 - 1) * 1.5;
+  document.querySelector('.screen').style.transform = `translate(${x.toFixed(2)}rem,${y.toFixed(2)}rem)`;
+}
+
+function undim() {
+  if (!document.body.classList.contains('dimmed')) return;
+  document.body.classList.remove('dimmed');
+  clearInterval(driftTimer);
+  document.querySelector('.screen').style.transform = '';
+}
+
+// Called from the 500 ms tick: dims after DIM_AFTER_MS paused without input.
+function updateDim() {
+  if (lastState?.isPlaying || settingsOpen()) {
+    pausedSince = null;
+    undim();
+    return;
+  }
+  if (pausedSince === null) pausedSince = Date.now();
+  const quietFor = Date.now() - Math.max(pausedSince, lastInputAt);
+  if (quietFor < DIM_AFTER_MS || document.body.classList.contains('dimmed')) return;
+  document.body.classList.add('dimmed');
+  drift();
+  driftTimer = setInterval(drift, DRIFT_EVERY_MS);
+}
+
+function isMediaKey(code) {
+  return code === 415 || code === 19 || code === 463 || code === 413;
+}
+
 function handleRemoteKey(event) {
   const code = event.keyCode || event.which || 0;
   const key = event.key || '';
   const active = document.activeElement;
   const isRange = active && active.tagName === 'INPUT' && active.type === 'range';
   const isSeek = active === $('seekBar');
-  const adjusting = (isRange || isSeek) && active.classList.contains('adjusting');
+  const adjusting = isRange && active.classList.contains('adjusting');
   const isLog = active === $('debugLog');
 
   const handled = () => { event.preventDefault(); event.stopPropagation(); };
 
+  if (wake() && !isMediaKey(code)) { handled(); return; }
+
   if (code === 37 || key === 'ArrowLeft') {
     handled();
-    if (!adjusting) moveFocus('left');
-    else isSeek ? seekBy(-SEEK_STEP_MS) : nudgeRange(active, -5);
+    if (isSeek) seekBy(-SEEK_STEP_MS);
+    else adjusting ? nudgeRange(active, -5) : moveFocus('left');
     return;
   }
   if (code === 39 || key === 'ArrowRight') {
     handled();
-    if (!adjusting) moveFocus('right');
-    else isSeek ? seekBy(SEEK_STEP_MS) : nudgeRange(active, 5);
+    if (isSeek) seekBy(SEEK_STEP_MS);
+    else adjusting ? nudgeRange(active, 5) : moveFocus('right');
     return;
   }
   if (code === 38 || key === 'ArrowUp') { handled(); if (!(isLog && scrollLog(active, -80))) moveFocus('up'); return; }
@@ -557,7 +787,8 @@ function handleRemoteKey(event) {
 
   if (code === 13 || key === 'Enter') {
     handled();
-    if (isRange || isSeek) setAdjusting(active, !adjusting);
+    if (isSeek) commitSeek();
+    else if (isRange) setAdjusting(active, !adjusting);
     else if (active && typeof active.click === 'function') active.click();
     return;
   }
@@ -623,7 +854,8 @@ function initialize() {
   });
 
   $('volumeSlider').addEventListener('blur', (e) => setAdjusting(e.target, false));
-  $('seekBar').addEventListener('blur', (e) => setAdjusting(e.target, false));
+  // Leaving the progress bar sends a seek that is still waiting.
+  $('seekBar').addEventListener('blur', commitSeek);
   $('volumeSlider').addEventListener('input', (e) => {
     const vol = Number(e.target.value);
     if (player) try { player.setVolume(vol); } catch (_) {}
@@ -656,13 +888,17 @@ function initialize() {
 
   setInterval(() => {
     updateProgress();
-    updateQualityBadges();
     updateSyncInfo();
+    updateDim();
   }, 500);
+  document.addEventListener('mousemove', wake);
   setInterval(updateClock, 1000);
 
   updateClock();
   setPairing(initialPairingStatus(), null);
+  setPalette(null, NEUTRAL_PALETTE);
+  setTimeout(finishBoot, BOOT_TIMEOUT_MS);
+  wake();
   requestAnimationFrame(() => setTvFocus($('playPause')));
   log('VIDAA Sendspin UI ready, build ' + __BUILD_ID__);
   start();

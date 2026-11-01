@@ -1,96 +1,127 @@
 # VIDAA Sendspin
 
-A browser-based Sendspin player for VIDAA TVs using [`sendspin/sendspin-js`](https://github.com/Sendspin/sendspin-js).
+A Sendspin player for VIDAA TVs, running in the TV's browser and built on
+[`sendspin/sendspin-js`](https://github.com/Sendspin/sendspin-js).
 
-The client connects directly to a Sendspin server over WebSocket and provides a TV-friendly interface for synchronized playback, pairing by PIN, playback controls, volume control, metadata, artwork, connection status, and diagnostics.
+The TV becomes a synchronized Music Assistant speaker with a full-screen Now Playing display. The
+Music Assistant server is discovered automatically, so there is nothing to configure — pair once and
+it plays.
 
 ## Features
 
-- Single full-screen Now Playing view: artwork, title, artist, album, year, stream-quality badges, live progress
-- Transport controls (shuffle / previous / play-pause / next / repeat) and volume, reflecting server state
-- Automatic discovery of the Music Assistant Sendspin server via mDNS (`_sendspin-server._tcp`) — nothing to configure
-- Automatic reconnect, falling back to rediscovery if the server moves
-- Settings drawer (gear icon, top right) for dynamic-PIN pairing, connection info and a debug log
-- D-pad / remote-control navigation, VIDAA media keys
-- PWA manifest and favicon
+- **Now Playing screen**: large artwork, title, artist, album and year, with a live progress bar
+- **Artwork colours**: accent colour and background glow are taken from the current cover; neutral
+  graphite when there is no artwork
+- **Auto-hiding controls**: shuffle, previous, play/pause, next, repeat and volume fade out after
+  5 s without a key press; the next key press brings them back
+- **Seeking** on the progress bar in 10 s steps
+- **Track changes as one transition**: artwork and colours are loaded first, then the text rises
+  while the artwork and background crossfade
+- **Clean startup**: the screen stays dark until the first track is ready, then fades in
+- **Burn-in protection**: after 2 minutes paused without input the screen dims and slowly drifts;
+  any key restores it
+- **Automatic server discovery** via mDNS, automatic reconnect and rediscovery if the server moves
+- **Pairing required** before playback (unpaired access is disabled)
+- **Settings drawer** (gear icon, top right) for pairing, connection status and a debug log
+- Remote-control navigation (D-pad, OK, Back) and play/pause/stop media keys where available
+- Bundled Inter font, so the TV needs no internet access
+- App icon and web app manifest (installable on phones and computers)
 
-## Server discovery
+## Quick start (Docker)
 
-Browsers cannot browse mDNS, so the container runs a small Node server (`server/index.mjs`) that
-serves the UI and continuously browses for `_sendspin-server._tcp`. The TV asks it via
-`GET /api/server` and connects directly to the advertised address.
+```bash
+docker compose up -d --build
+```
 
-mDNS multicast does not cross Docker's bridge network, so the container must use **host networking**
-(see `docker-compose.yaml`).
+Then open `http://YOUR-SERVER-IP:8080/` on the VIDAA TV and pair it (see [Pairing](#pairing)).
 
-If the discovery endpoint is unavailable (e.g. the `dist/` folder is hosted by a plain web server),
-the UI tries `ws://<page host>:8927/sendspin`, which works when the UI is hosted on the Music Assistant machine.
+The container must use **host networking** (already set in `docker-compose.yaml`): mDNS discovery
+relies on multicast, which does not cross Docker's bridge network. The port can be changed with the
+`PORT` environment variable (default `8080`).
 
-## Build and run locally
+## Pairing
+
+Pairing is needed once per TV. Press the gear icon (top right), then start pairing for this player in
+Music Assistant. The PIN appears in the Settings drawer automatically — the drawer opens by itself when
+a PIN arrives. If Music Assistant asks for a confirmation on the device, press **Allow pairing**.
+
+Clearing the TV browser's data removes the pairing; pair again the same way.
+
+## Updating
+
+Rebuild and restart the container:
+
+```bash
+docker compose up -d --build
+```
+
+If changes don't show up, Docker may be reusing cached build steps:
+
+```bash
+docker compose build --no-cache && docker compose up -d
+```
+
+Every build gets a build ID, which is added to the script URL so the TV never combines a new page
+with an old cached script. The ID is shown at the top of the Settings debug log
+(`VIDAA Sendspin UI ready, build …`) — check it first if the TV seems to run an older version.
+
+## How it works
+
+The container runs a small Node server (`server/index.mjs`) that serves the UI and provides two
+endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/server` | The Sendspin server found via mDNS (`_sendspin-server._tcp`). Browsers cannot use mDNS themselves, so the TV asks here and then connects directly to the advertised address. |
+| `GET /api/art?url=…` | Re-serves artwork from the app's own address so the UI may read its pixels for the colours (artwork hosts usually don't allow that cross-origin). Only http(s) URLs that return an image are passed through. |
+
+If `/api/server` is unavailable (e.g. `dist/` hosted by a plain web server), the UI tries
+`ws://<page host>:8927/sendspin`, which works when the UI is hosted on the Music Assistant machine.
+Artwork colours then fall back to the neutral palette.
+
+## Remote control
+
+| Key | Action |
+|---|---|
+| Any key while the controls are hidden | Show the controls again (the key itself is not acted on) |
+| Arrow keys | Move between controls |
+| OK | Activate the focused control |
+| Left / Right on the progress bar | Seek 10 s back / forward; presses add up and the seek is sent when you pause, press OK or leave the bar |
+| OK on the volume slider | Start adjusting: Left / Right change the volume; OK, Back, Up or Down stop |
+| Up / Down on the debug log | Scroll the log |
+| Back | Stop volume adjustment, close Settings, or — on the Now Playing screen — close the app |
+
+Focus moves by on-screen position. While Settings is open, focus stays inside the drawer.
+
+## Development
+
+Requires Node.js 22 (as used in the Docker image).
 
 ```bash
 npm install
 npm run serve        # builds dist/ and starts the server on :8080
 ```
 
-Then open `http://YOUR-SERVER-IP:8080/` on the VIDAA TV.
-
-## Docker
-
-```bash
-docker compose up -d --build
-```
-
-## Pairing
-
-Pairing is only needed once. Press the gear icon (top right), then start pairing for this player in
-Music Assistant. The PIN appears in the drawer automatically (the drawer also opens by itself when a
-PIN arrives). If Music Assistant asks for a local confirmation, press **Allow pairing**.
-
-## VIDAA notes
-
-The application is bundled as a single browser-compatible IIFE and does not require native ES module support.
-
-The JavaScript build target is ES2017. Missing native browser APIs such as WebSocket, Web Audio, or WebCrypto still depend on the VIDAA browser implementation.
-
-Audio initialization is performed from the player startup flow because TV browsers may enforce autoplay restrictions.
-
-## Project structure
+`npm run build` only builds `dist/`; `npm start` only starts the server.
 
 ```text
 .
 ├── Dockerfile
 ├── docker-compose.yaml
-├── build.mjs
+├── build.mjs        # bundles src/main.js, copies public/ and the Inter fonts, adds the build ID
 ├── package.json
-├── public/          # index.html, favicon, manifest
-├── server/          # static server + mDNS discovery endpoint
+├── public/          # index.html, app icons, manifest
+├── server/          # static server, mDNS discovery and artwork proxy
 └── src/main.js      # UI logic, bundled to dist/sendspin.js
 ```
 
-## Remote control navigation
+## VIDAA notes
 
-The interface is designed to work without a mouse cursor.
-
-Supported controls:
-
-- Arrow Up / Down / Left / Right: move focus between visible controls
-- OK / Enter: activate the focused control
-- Progress bar: press OK to start seeking, Left / Right jump 10 s back / forward (presses add up, the seek is sent when you pause), OK or Back to stop
-- Volume slider: press OK to start adjusting, Left / Right change the volume, OK or Back to stop
-- Back: close Settings; from Now Playing the app asks the browser to close
-- Focused controls are highlighted with a blue focus ring
-
-The navigation algorithm uses the on-screen position of controls, so it works across the playback controls and the Settings drawer.
-
-### Remote troubleshooting
-
-Remote events are captured on `window` during the capture phase for VIDAA compatibility.
-Remote keys the app does not handle are written to the Debug log as:
-
-```text
-Unhandled key key=ColorF0Red code=403
-```
-
-VIDAA mandatory navigation key codes are 37/38/39/40, OK is 13 and Back is 8.
-The implementation deliberately uses legacy `element.focus()` for compatibility with older VIDAA browser engines.
+- The app is bundled as a single IIFE with an ES2017 target and needs no native ES module support.
+  WebSocket, Web Audio and WebCrypto must still be provided by the TV's browser.
+- Audio starts on launch. If a TV browser blocks that, any remote key press starts it.
+- Remote keys are captured on `window` in the capture phase, because some VIDAA shells consume them
+  earlier. Navigation keys are 37/38/39/40, OK is 13 and Back is 8.
+- Focus uses plain `element.focus()` for compatibility with older VIDAA browser engines.
+- Remote keys the app does not handle are written to the debug log, e.g.
+  `Unhandled key key=ColorF0Red code=403`.

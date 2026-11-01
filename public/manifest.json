@@ -3,14 +3,20 @@
   "short_name": "Sendspin",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#03101f",
-  "theme_color": "#071a2f",
+  "background_color": "#05080f",
+  "theme_color": "#05080f",
   "icons": [
     {
       "src": "favicon.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

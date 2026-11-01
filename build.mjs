@@ -25,6 +25,15 @@ await esbuild.build({
 
 await cp('public', 'dist', { recursive: true });
 
+// Bundle the Inter font so the TV needs no internet access.
+await mkdir('dist/fonts', { recursive: true });
+for (const weight of [400, 600, 700]) {
+  for (const ext of ['woff2', 'woff']) {
+    const file = `inter-latin-${weight}-normal.${ext}`;
+    await cp(`node_modules/@fontsource/inter/files/${file}`, `dist/fonts/${file}`);
+  }
+}
+
 const html = await readFile('dist/index.html', 'utf8');
 await writeFile('dist/index.html', html.replace('src="sendspin.js"', `src="sendspin.js?v=${buildId}"`));
 
