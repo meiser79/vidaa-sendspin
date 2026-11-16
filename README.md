@@ -125,3 +125,7 @@ npm run serve        # builds dist/ and starts the server on :8080
 - Focus uses plain `element.focus()` for compatibility with older VIDAA browser engines.
 - Remote keys the app does not handle are written to the debug log, e.g.
   `Unhandled key key=ColorF0Red code=403`.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

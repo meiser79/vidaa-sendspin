@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "A browser-based VIDAA Sendspin player",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "node build.mjs",
     "serve": "npm run build && node server/index.mjs",
