@@ -10,7 +10,7 @@
     "start": "node server/index.mjs"
   },
   "dependencies": {
-    "@sendspin/sendspin-js": "^5.0.0",
+    "@sendspin/sendspin-js": "^6.0.0",
     "bonjour-service": "^1.4.4"
   },
   "devDependencies": {

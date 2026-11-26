@@ -186,8 +186,10 @@ function updatePlayerState(state) {
   const meta = state?.serverState?.metadata || {};
   updateTrack(meta);
 
-  $('shuffle').classList.toggle('on', !!meta.shuffle);
-  const repeat = meta.repeat || 'off';
+  // v6 reports shuffle/repeat in the controller state, not the metadata.
+  const controller = state?.serverState?.controller || {};
+  $('shuffle').classList.toggle('on', !!controller.shuffle);
+  const repeat = controller.repeat || 'off';
   $('repeat').classList.toggle('on', repeat !== 'off');
   $('repeat').classList.toggle('repeat-one', repeat === 'one');
 
@@ -474,7 +476,8 @@ async function discover() {
 
 function teardown() {
   if (!player) return;
-  try { player.disconnect('restart'); } catch (_) {}
+  // We reconnect with a fresh player, so release the audio output too.
+  try { player.destroy('restart'); } catch (_) {}
   player = null;
 }
 
@@ -487,13 +490,14 @@ function createPlayer(target) {
   const config = {
     clientName: 'VIDAA TV',
     productName: 'VIDAA Sendspin',
+    manufacturer: 'VIDAA',
     correctionMode: 'sync',
     // Only paired servers may play; pair once via Settings.
     unpairedAccess: false,
-    pinOutChannels: ['display'],
-    minPinLength: 6,
+    pairingCodeOutChannels: ['display'],
+    pairingCodeFormats: ['digits'],
 
-    onPairingPin: (pin) => {
+    onPairingCode: (pin) => {
       log('Pairing PIN ' + (pin ? 'received' : 'cleared'));
       setPairing(pin ? 'Enter this PIN in Music Assistant' : $('pairStatus').textContent, pin);
       if (pin) openSettings($('cancelPairing'));
@@ -529,16 +533,7 @@ function createPlayer(target) {
     }
   };
 
-  // The SDK appends /sendspin to baseUrl; only use it (and its auto-reconnect)
-  // when the advertised path is the standard one.
-  if (/\/sendspin\/?$/.test(target.path || DEFAULT_PATH)) {
-    config.baseUrl = `http://${target.host}:${target.port}${target.path || DEFAULT_PATH}`;
-  } else {
-    const ws = new WebSocket(target.url);
-    ws.binaryType = 'arraybuffer';
-    ws.addEventListener('close', () => { if (player) { teardown(); scheduleRetry(); } });
-    config.webSocket = ws;
-  }
+  config.url = target.url;
   return new SendspinPlayer(config);
 }
 
@@ -846,11 +841,11 @@ function initialize() {
   $('previous').addEventListener('click', () => send('previous'));
   $('next').addEventListener('click', () => send('next'));
   $('shuffle').addEventListener('click', () => {
-    send(lastState?.serverState?.metadata?.shuffle ? 'unshuffle' : 'shuffle');
+    send(lastState?.serverState?.controller?.shuffle ? 'unshuffle' : 'shuffle');
   });
   $('repeat').addEventListener('click', () => {
     const next = { off: 'repeat_all', all: 'repeat_one', one: 'repeat_off' };
-    send(next[lastState?.serverState?.metadata?.repeat || 'off']);
+    send(next[lastState?.serverState?.controller?.repeat || 'off']);
   });
 
   $('volumeSlider').addEventListener('blur', (e) => setAdjusting(e.target, false));
